@@ -71,7 +71,7 @@ export default function TransactionsPage() {
       {/* Filters */}
       <div className="space-y-2.5 rounded-xl border border-line bg-card p-3">
         <div className="flex flex-wrap items-center gap-2.5">
-          <div className="relative min-w-[240px] flex-1">
+          <div className="relative w-full min-w-0 flex-1 sm:w-auto sm:min-w-[240px]">
             <Icon
               name="search"
               className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-faint"
@@ -83,7 +83,7 @@ export default function TransactionsPage() {
               className="pl-9"
             />
           </div>
-          <Select value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)} className="w-44">
+          <Select value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)} className="w-full flex-1 sm:w-44 sm:flex-none">
             <option value="">All warehouses</option>
             {warehouses.map((w) => (
               <option key={w.id} value={w.id}>
@@ -91,10 +91,10 @@ export default function TransactionsPage() {
               </option>
             ))}
           </Select>
-          <div className="flex items-center gap-1.5 text-xs text-ink-faint">
-            <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-36" />
+          <div className="grid w-full flex-[2] grid-cols-[1fr_auto_1fr] items-center gap-1.5 text-xs text-ink-faint sm:w-auto sm:flex-none">
+            <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="min-w-0" />
             <span>→</span>
-            <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-36" />
+            <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="min-w-0" />
           </div>
           {hasFilters ? (
             <Button
@@ -108,6 +108,7 @@ export default function TransactionsPage() {
                 setFrom("");
                 setTo("");
               }}
+              className="w-full sm:w-auto"
             >
               Clear
             </Button>

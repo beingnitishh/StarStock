@@ -210,13 +210,13 @@ export function Modal({
 
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-[70] flex items-start justify-center overflow-y-auto p-4 pt-[8vh]">
+    <div className="fixed inset-0 z-[70] flex items-end overflow-y-auto sm:items-start sm:justify-center sm:p-4 sm:pt-[8vh]">
       <div className="fixed inset-0 bg-coal/55" onClick={onClose} />
       <div
-        className={`rise-in relative w-full ${width} rounded-xl border border-line bg-surface shadow-2xl shadow-coal/30`}
+        className={`rise-in relative w-full rounded-t-xl border border-line bg-surface shadow-2xl shadow-coal/30 sm:rounded-xl ${width} max-h-[92vh] overflow-y-auto`}
       >
-        <div className="flex items-start justify-between border-b border-line px-5 py-4">
-          <div>
+        <div className="sticky top-0 z-10 flex items-start justify-between border-b border-line bg-surface/95 px-4 py-4 backdrop-blur sm:px-5">
+          <div className="min-w-0 pr-2">
             <h2 className="font-display text-base font-semibold tracking-tight">{title}</h2>
             {subtitle ? <p className="mt-0.5 text-xs text-ink-faint">{subtitle}</p> : null}
           </div>
@@ -228,7 +228,7 @@ export function Modal({
             <Icon name="x" className="h-4 w-4" />
           </button>
         </div>
-        <div className="px-5 py-4">{children}</div>
+        <div className="px-4 py-4 sm:px-5">{children}</div>
       </div>
     </div>
   );

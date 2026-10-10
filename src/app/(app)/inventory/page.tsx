@@ -116,20 +116,22 @@ export default function InventoryPage() {
 
   return (
     <div className="rise-in space-y-5">
-      <div className="flex items-end justify-between gap-4">
-        <div>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0">
           <h1 className="font-display text-2xl font-bold tracking-tight">Inventory</h1>
           <p className="mt-1 text-sm text-ink-faint">
             {fmtInt(products.length)} products · sorted by SKU · stock across {warehouses.length}{" "}
             warehouse{warehouses.length === 1 ? "" : "s"}
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <Button variant="secondary" icon="download" onClick={exportExcel}>
-            Export Excel
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
+          <Button variant="secondary" icon="download" onClick={exportExcel} className="flex-1 justify-center sm:flex-none">
+            <span className="hidden sm:inline">Export Excel</span>
+            <span className="sm:hidden">Export</span>
           </Button>
-          <Button variant="secondary" icon="upload" onClick={() => setBulkOpen(true)}>
-            Bulk upload
+          <Button variant="secondary" icon="upload" onClick={() => setBulkOpen(true)} className="flex-1 justify-center sm:flex-none">
+            <span className="hidden sm:inline">Bulk upload</span>
+            <span className="sm:hidden">Bulk</span>
           </Button>
           <Button
             variant="primary"
@@ -138,15 +140,17 @@ export default function InventoryPage() {
               setEditing(null);
               setFormOpen(true);
             }}
+            className="flex-1 justify-center sm:flex-none"
           >
-            List product
+            <span className="hidden sm:inline">List product</span>
+            <span className="sm:hidden">New</span>
           </Button>
         </div>
       </div>
 
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2.5 rounded-xl border border-line bg-card p-3">
-        <div className="relative min-w-[240px] flex-1">
+        <div className="relative w-full min-w-0 flex-1 sm:w-auto sm:min-w-[240px]">
           <Icon
             name="search"
             className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-faint"
@@ -158,7 +162,7 @@ export default function InventoryPage() {
             className="pl-9"
           />
         </div>
-        <Select value={whFilter} onChange={(e) => setWhFilter(e.target.value)} className="w-44">
+        <Select value={whFilter} onChange={(e) => setWhFilter(e.target.value)} className="w-full flex-1 sm:w-44 sm:flex-none">
           <option value="">All warehouses</option>
           {warehouses.map((w) => (
             <option key={w.id} value={w.id}>
@@ -166,13 +170,13 @@ export default function InventoryPage() {
             </option>
           ))}
         </Select>
-        <Select value={sort} onChange={(e) => setSort(e.target.value as SortKey)} className="w-40">
+        <Select value={sort} onChange={(e) => setSort(e.target.value as SortKey)} className="w-full flex-1 sm:w-40 sm:flex-none">
           <option value="sku-asc">SKU A → Z</option>
           <option value="sku-desc">SKU Z → A</option>
           <option value="stock-desc">Stock high → low</option>
           <option value="stock-asc">Stock low → high</option>
         </Select>
-        <label className="flex cursor-pointer select-none items-center gap-2 rounded-lg border border-line-strong bg-surface px-3 py-2 text-xs font-semibold text-ink-soft">
+        <label className="flex w-full cursor-pointer select-none items-center justify-center gap-2 rounded-lg border border-line-strong bg-surface px-3 py-2 text-xs font-semibold text-ink-soft sm:w-auto">
           <input
             type="checkbox"
             checked={lowOnly}
@@ -222,8 +226,8 @@ export default function InventoryPage() {
           }
         />
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-line bg-card">
-          <table className="w-full min-w-[900px] text-left">
+        <div className="-mx-4 overflow-x-auto rounded-none border-y border-line bg-card px-4 sm:mx-0 sm:rounded-xl sm:border sm:px-0">
+          <table className="w-full min-w-[780px] text-left sm:min-w-[900px]">
             <thead>
               <tr className="border-b border-line bg-surface text-[10px] font-bold uppercase tracking-[0.12em] text-ink-faint">
                 <th className="px-4 py-2.5">Product</th>
@@ -301,8 +305,9 @@ export default function InventoryPage() {
                           onClick={() =>
                             setOpModal({ open: true, type: "inbound", productId: p.id })
                           }
+                          aria-label="Inbound"
                         >
-                          Inbound
+                          <span className="hidden sm:inline">Inbound</span>
                         </Button>
                         <Button
                           size="sm"
@@ -311,8 +316,9 @@ export default function InventoryPage() {
                           onClick={() =>
                             setOpModal({ open: true, type: "outbound", productId: p.id })
                           }
+                          aria-label="Outbound"
                         >
-                          Outbound
+                          <span className="hidden sm:inline">Outbound</span>
                         </Button>
                       </div>
                     </td>
