@@ -5,12 +5,6 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icons";
 import { Button, Field, Input } from "@/components/ui";
 
-const DEMO_ACCOUNTS = [
-  { label: "Admin", username: "admin", password: "admin123" },
-  { label: "Stock Head", username: "stockhead", password: "stock123" },
-  { label: "Stock Boy", username: "stockboy", password: "stock123" },
-];
-
 export function LoginForm() {
   const router = useRouter();
   const [username, setUsername] = useState("");
@@ -141,35 +135,6 @@ export function LoginForm() {
               Sign in
             </Button>
           </form>
-
-          <div className="mt-8 rounded-xl border border-line bg-card p-4">
-            <p className="text-[11px] font-bold uppercase tracking-wider text-ink-faint">
-              Demo accounts
-            </p>
-            <div className="mt-2.5 grid grid-cols-3 gap-2">
-              {DEMO_ACCOUNTS.map((a) => (
-                <button
-                  key={a.username}
-                  type="button"
-                  onClick={() => {
-                    setUsername(a.username);
-                    setPassword(a.password);
-                    setError(null);
-                  }}
-                  className="rounded-lg border border-line-strong bg-surface px-2 py-2 text-center transition-colors hover:border-brand/60 hover:bg-brand-soft/50"
-                >
-                  <span className="block text-xs font-bold">{a.label}</span>
-                  <span className="mt-0.5 block font-mono text-[10px] text-ink-faint">
-                    {a.username}
-                  </span>
-                </button>
-              ))}
-            </div>
-            <p className="mt-2.5 text-[11px] leading-relaxed text-ink-faint">
-              Click a role to fill its credentials, then sign in. Only Admin can create new
-              users.
-            </p>
-          </div>
         </div>
       </div>
     </div>

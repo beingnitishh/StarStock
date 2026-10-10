@@ -1,4 +1,5 @@
 import {
+  boolean,
   index,
   integer,
   pgTable,
@@ -19,6 +20,8 @@ export const users = pgTable("users", {
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
+  active: boolean("active").notNull().default(true),
+  deactivatedAt: timestamp("deactivated_at", { withTimezone: true }),
 });
 
 export const sessions = pgTable("sessions", {

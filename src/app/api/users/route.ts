@@ -1,4 +1,4 @@
-import { asc, eq } from "drizzle-orm";
+import { asc, desc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { users } from "@/db/schema";
 import {
@@ -15,18 +15,20 @@ const ROLE_SET = new Set(["admin", "stock_head", "stock_boy"]);
 
 export async function GET() {
   try {
-    await requireAdmin();
+    const admin = await requireAdmin();
     const rows = await db
       .select({
         id: users.id,
         username: users.username,
         displayName: users.displayName,
         role: users.role,
+        active: users.active,
         createdAt: users.createdAt,
+        deactivatedAt: users.deactivatedAt,
       })
       .from(users)
-      .orderBy(asc(users.id));
-    return Response.json({ users: rows });
+      .orderBy(desc(users.active), asc(users.id));
+    return Response.json({ users: rows, me: admin.id });
   } catch (e) {
     return errResponse(e);
   }
@@ -58,12 +60,18 @@ export async function POST(req: Request) {
     }
 
     const existing = await db
-      .select({ id: users.id })
+      .select({ id: users.id, active: users.active })
       .from(users)
       .where(eq(users.username, username))
       .limit(1);
     if (existing.length > 0) {
-      throw new HttpError(409, `Username "${username}" is already taken.`);
+      if (existing[0].active) {
+        throw new HttpError(409, `Username "${username}" is already taken.`);
+      }
+      throw new HttpError(
+        409,
+        `Username "${username}" belongs to a removed account. Choose a different username, or restore that account.`,
+      );
     }
 
     const [created] = await db
