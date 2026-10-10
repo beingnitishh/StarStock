@@ -19,7 +19,9 @@ type UserRow = {
   username: string;
   displayName: string;
   role: Role;
+  active: boolean;
   createdAt: string;
+  deactivatedAt: string | null;
 };
 
 const ROLE_BADGE: Record<Role, string> = {
@@ -31,9 +33,13 @@ const ROLE_BADGE: Record<Role, string> = {
 export default function UsersPage() {
   const toast = useToast();
   const [users, setUsers] = useState<UserRow[]>([]);
+  const [meId, setMeId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [forbidden, setForbidden] = useState(false);
   const [open, setOpen] = useState(false);
+  const [removing, setRemoving] = useState<UserRow | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [restoringId, setRestoringId] = useState<number | null>(null);
 
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -52,6 +58,7 @@ export default function UsersPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to load users.");
       setUsers(data.users ?? []);
+      setMeId(typeof data.me === "number" ? data.me : null);
     } catch (e) {
       toast.push("error", "Failed to load users", e instanceof Error ? e.message : undefined);
     } finally {
@@ -84,8 +91,53 @@ export default function UsersPage() {
       load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not create user.");
+    } finally {
       setBusy(false);
     }
+  }
+
+  async function patchActive(user: UserRow, active: boolean): Promise<boolean> {
+    try {
+      const res = await fetch(`/api/users/${user.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ active }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(
+          data.error ?? (active ? "Could not restore user." : "Could not remove user."),
+        );
+      }
+      toast.push(
+        "success",
+        active ? "User restored" : "User removed",
+        `${data.user.displayName} · ${data.user.username}`,
+      );
+      load();
+      return true;
+    } catch (e) {
+      toast.push(
+        "error",
+        active ? "Failed to restore user" : "Failed to remove user",
+        e instanceof Error ? e.message : undefined,
+      );
+      return false;
+    }
+  }
+
+  async function confirmRemove() {
+    if (!removing) return;
+    setSaving(true);
+    const ok = await patchActive(removing, false);
+    setSaving(false);
+    if (ok) setRemoving(null);
+  }
+
+  async function restore(user: UserRow) {
+    setRestoringId(user.id);
+    await patchActive(user, true);
+    setRestoringId(null);
   }
 
   if (forbidden) {
@@ -94,7 +146,7 @@ export default function UsersPage() {
         <EmptyState
           icon="alert"
           title="Admin access required"
-          text="Only Admin can view or create user accounts. Sign in with an Admin account to manage users."
+          text="Only Admin can view or manage user accounts. Sign in with an Admin account to manage users."
         />
       </div>
     );
@@ -106,7 +158,8 @@ export default function UsersPage() {
         <div>
           <h1 className="font-display text-2xl font-bold tracking-tight">Users</h1>
           <p className="mt-1 text-sm text-ink-faint">
-            Manage sign-in accounts and roles. Only Admin can do this.
+            Add sign-in accounts for new staff and remove them when they leave. Only Admin can
+            do this.
           </p>
         </div>
         <Button variant="primary" icon="plus" onClick={() => setOpen(true)}>
@@ -127,6 +180,13 @@ export default function UsersPage() {
         ))}
       </div>
 
+      <p className="flex items-start gap-2 text-xs leading-relaxed text-ink-faint">
+        <Icon name="info" className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        Removed users are signed out immediately and cannot log in. Their past stock activity
+        stays in the history under their name. A removed username stays reserved, so give the
+        new person a new username.
+      </p>
+
       {loading ? (
         <div className="space-y-2">
           {Array.from({ length: 3 }).map((_, i) => (
@@ -135,19 +195,20 @@ export default function UsersPage() {
         </div>
       ) : (
         <div className="-mx-4 overflow-x-auto rounded-none border-y border-line bg-card px-4 sm:mx-0 sm:overflow-hidden sm:rounded-xl sm:border sm:px-0">
-          <table className="w-full min-w-[560px] text-left">
+          <table className="w-full min-w-[640px] text-left">
             <thead>
               <tr className="border-b border-line bg-surface text-[10px] font-bold uppercase tracking-[0.12em] text-ink-faint">
                 <th className="px-4 py-2.5">User</th>
                 <th className="px-4 py-2.5">Username</th>
                 <th className="px-4 py-2.5">Role</th>
                 <th className="px-4 py-2.5">Created</th>
+                <th className="px-4 py-2.5 text-right">Action</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-line">
               {users.map((u) => (
                 <tr key={u.id} className="transition-colors hover:bg-surface/70">
-                  <td className="px-4 py-3">
+                  <td className={`px-4 py-3 ${u.active ? "" : "opacity-50"}`}>
                     <div className="flex items-center gap-3">
                       <span className="flex h-8 w-8 items-center justify-center rounded-full bg-brand text-[11px] font-bold text-paper">
                         {u.displayName
@@ -157,18 +218,57 @@ export default function UsersPage() {
                           .join("")
                           .toUpperCase()}
                       </span>
-                      <span className="text-[13px] font-semibold">{u.displayName}</span>
+                      <span className="min-w-0">
+                        <span className="text-[13px] font-semibold">{u.displayName}</span>
+                        {!u.active ? (
+                          <span className="mt-0.5 block text-[11px] font-semibold text-out">
+                            Removed{u.deactivatedAt ? ` · ${fmtDate(u.deactivatedAt)}` : ""}
+                          </span>
+                        ) : null}
+                      </span>
                     </div>
                   </td>
-                  <td className="px-4 py-3 font-mono text-xs">{u.username}</td>
-                  <td className="px-4 py-3">
+                  <td
+                    className={`px-4 py-3 font-mono text-xs ${u.active ? "" : "opacity-50"}`}
+                  >
+                    {u.username}
+                  </td>
+                  <td className={`px-4 py-3 ${u.active ? "" : "opacity-50"}`}>
                     <span
                       className={`inline-flex rounded-full px-2.5 py-1 text-[11px] font-bold ${ROLE_BADGE[u.role]}`}
                     >
                       {ROLE_LABELS[u.role]}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-xs text-ink-soft">{fmtDate(u.createdAt)}</td>
+                  <td
+                    className={`px-4 py-3 text-xs text-ink-soft ${u.active ? "" : "opacity-50"}`}
+                  >
+                    {fmtDate(u.createdAt)}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    {u.id === meId ? (
+                      <span className="text-xs font-semibold text-ink-faint">You</span>
+                    ) : u.active ? (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        icon="trash"
+                        onClick={() => setRemoving(u)}
+                      >
+                        Remove
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        icon="check"
+                        loading={restoringId === u.id}
+                        onClick={() => restore(u)}
+                      >
+                        Restore
+                      </Button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -233,6 +333,34 @@ export default function UsersPage() {
             </Button>
             <Button variant="primary" icon="plus" onClick={create} loading={busy}>
               Create user
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={removing !== null}
+        onClose={() => {
+          if (!saving) setRemoving(null);
+        }}
+        title="Remove user?"
+        subtitle={removing ? `${removing.displayName} · ${removing.username}` : undefined}
+        width="max-w-md"
+      >
+        <div className="space-y-4">
+          <p className="text-sm leading-relaxed text-ink-soft">
+            They will be signed out right away and can no longer log in. Everything they did
+            stays in the history under their name. You can restore the account any time.
+          </p>
+          <p className="text-sm leading-relaxed text-ink-soft">
+            Their username stays reserved, so create the replacement with a new username.
+          </p>
+          <div className="flex justify-end gap-2 border-t border-line pt-4">
+            <Button variant="ghost" onClick={() => setRemoving(null)} disabled={saving}>
+              Cancel
+            </Button>
+            <Button variant="danger" icon="trash" onClick={confirmRemove} loading={saving}>
+              Remove user
             </Button>
           </div>
         </div>

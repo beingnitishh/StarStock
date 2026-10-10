@@ -21,6 +21,12 @@ export async function POST(req: Request) {
     if (!user || !verifyPassword(password, user.passwordHash)) {
       throw new HttpError(401, "Invalid username or password.");
     }
+    if (!user.active) {
+      throw new HttpError(
+        403,
+        "This account has been removed. Please contact your Admin.",
+      );
+    }
     await createSession(user.id);
     return Response.json({
       user: {

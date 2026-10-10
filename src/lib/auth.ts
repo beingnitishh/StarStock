@@ -49,6 +49,10 @@ export async function createSession(userId: number): Promise<void> {
   });
 }
 
+export async function revokeUserSessions(userId: number): Promise<void> {
+  await db.delete(sessions).where(eq(sessions.userId, userId));
+}
+
 export async function destroySession(): Promise<void> {
   const store = await cookies();
   const token = store.get(COOKIE_NAME)?.value;
@@ -71,6 +75,10 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   const row = rows[0];
   if (!row) return null;
   if (row.expiresAt.getTime() < Date.now()) {
+    await db.delete(sessions).where(eq(sessions.token, token));
+    return null;
+  }
+  if (!row.user.active) {
     await db.delete(sessions).where(eq(sessions.token, token));
     return null;
   }
