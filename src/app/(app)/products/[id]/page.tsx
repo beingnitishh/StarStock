@@ -110,13 +110,18 @@ export default function ProductPage() {
       </Link>
 
       {/* Header card */}
-      <div className="rounded-xl border border-line bg-card p-5">
+      <div className="rounded-xl border border-line bg-card p-4 sm:p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="flex items-start gap-4">
-            <ProductThumb src={product.imageUrl} name={product.name} size="h-20 w-20" rounded="rounded-xl" />
-            <div>
+          <div className="flex min-w-0 items-start gap-3 sm:gap-4">
+            <ProductThumb
+              src={product.imageUrl}
+              name={product.name}
+              size="h-16 w-16 sm:h-20 sm:w-20"
+              rounded="rounded-xl"
+            />
+            <div className="min-w-0">
               <div className="flex items-center gap-2.5">
-                <h1 className="font-mono text-xl font-bold tracking-tight">{product.sku}</h1>
+                <h1 className="truncate font-mono text-lg font-bold tracking-tight sm:text-xl">{product.sku}</h1>
                 <button
                   onClick={() => setEditOpen(true)}
                   className="rounded-md border border-line-strong p-1.5 text-ink-soft transition-colors hover:border-brand/50 hover:text-brand"
@@ -128,23 +133,22 @@ export default function ProductPage() {
               <p className="mt-0.5 text-sm text-ink-soft">{product.name || "Unnamed product"}</p>
               <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
                 <span className="rounded-full bg-surface px-2.5 py-1 font-semibold text-ink-soft ring-1 ring-line">
-                  Stock unit: <span className="capitalize">{product.stockUnit}</span>
+                  Unit: <span className="capitalize">{product.stockUnit}</span>
                 </span>
                 <span className="rounded-full bg-surface px-2.5 py-1 font-semibold text-ink-soft ring-1 ring-line">
-                  Carton contains: <span className="font-mono">{product.cartonContains} pcs</span>
+                  Pcs/ctn: <span className="font-mono">{product.cartonContains}</span>
                 </span>
                 <span className="rounded-full bg-surface px-2.5 py-1 font-semibold text-ink-soft ring-1 ring-line">
-                  Opening stock:{" "}
-                  <span className="font-mono">{fmtInt(product.openingStockPieces)} pcs</span>
+                  Opening: <span className="font-mono">{fmtInt(product.openingStockPieces)} pcs</span>
                 </span>
                 <span className="rounded-full bg-surface px-2.5 py-1 font-semibold text-ink-soft ring-1 ring-line">
-                  Listed {fmtDate(product.createdAt)}
+                  {fmtDate(product.createdAt)}
                 </span>
               </div>
             </div>
           </div>
-          <div className="flex flex-col items-end gap-3">
-            <div className="text-right">
+          <div className="flex w-full flex-col items-stretch gap-3 sm:w-auto sm:items-end">
+            <div className="sm:text-right">
               <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-ink-faint">
                 Total stock · all warehouses
               </p>
@@ -162,7 +166,7 @@ export default function ProductPage() {
               </p>
               <p className="font-mono text-xs text-ink-faint">{fmtInt(product.totalPieces)} pcs</p>
             </div>
-            <div className="flex gap-1.5">
+            <div className="grid grid-cols-2 gap-1.5 sm:flex sm:flex-wrap">
               <Button size="sm" variant="in" icon="inbound" onClick={() => { setOpType("inbound"); setOpOpen(true); }}>
                 Inbound
               </Button>
@@ -182,11 +186,12 @@ export default function ProductPage() {
 
       <div className="grid gap-4 xl:grid-cols-[360px_1fr]">
         {/* Warehouse stock */}
-        <div className="h-fit rounded-xl border border-line bg-card">
-          <div className="border-b border-line px-5 py-3.5">
+        <div className="h-fit overflow-hidden rounded-xl border border-line bg-card">
+          <div className="border-b border-line px-4 py-3.5 sm:px-5">
             <h2 className="font-display text-sm font-bold tracking-tight">Stock by warehouse</h2>
           </div>
-          <table className="w-full text-left">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[420px] text-left">
             <thead>
               <tr className="border-b border-line text-[10px] font-bold uppercase tracking-[0.12em] text-ink-faint">
                 <th className="px-5 py-2">Warehouse</th>
@@ -227,6 +232,7 @@ export default function ProductPage() {
               </tr>
             </tfoot>
           </table>
+          </div>
         </div>
 
         {/* History */}
@@ -240,12 +246,12 @@ export default function ProductPage() {
                 {history.length} recorded movement{history.length === 1 ? "" : "s"} — newest first
               </p>
             </div>
-            <div className="flex gap-1 rounded-lg bg-ink/5 p-1">
+            <div className="flex gap-1 overflow-x-auto rounded-lg bg-ink/5 p-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
               {(["all", "inbound", "outbound", "transfer", "adjustment"] as const).map((t) => (
                 <button
                   key={t}
                   onClick={() => setTypeFilter(t)}
-                  className={`rounded-md px-2.5 py-1 text-[11px] font-bold capitalize transition-colors ${
+                  className={`shrink-0 rounded-md px-2.5 py-1 text-[11px] font-bold capitalize transition-colors ${
                     typeFilter === t ? "bg-card text-ink shadow-sm" : "text-ink-soft hover:text-ink"
                   }`}
                 >

@@ -167,7 +167,7 @@ export function BulkUploadModal({
           </>
         ) : (
           <>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="rounded-lg border border-in/30 bg-in-soft px-4 py-3">
                 <p className="font-display text-xl font-bold text-in">{result.created}</p>
                 <p className="text-xs font-semibold text-in/80">products listed</p>

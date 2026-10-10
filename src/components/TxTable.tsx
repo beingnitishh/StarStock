@@ -86,8 +86,8 @@ export function TxTable({
     );
   }
   return (
-    <div className="overflow-x-auto rounded-xl border border-line bg-card">
-      <table className="w-full min-w-[820px] text-left">
+    <div className="-mx-4 overflow-x-auto rounded-none border-y border-line bg-card px-4 sm:mx-0 sm:rounded-xl sm:border sm:px-0">
+      <table className="w-full min-w-[720px] text-left sm:min-w-[820px]">
         <thead>
           <tr className="border-b border-line bg-surface text-[10px] font-bold uppercase tracking-[0.12em] text-ink-faint">
             <th className="px-4 py-2.5">Date & time</th>

@@ -248,7 +248,7 @@ export function StockOpModal({
         ) : null}
 
         {/* Quantity + unit */}
-        <div className="grid grid-cols-[1fr_150px] gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_150px]">
           <Field
             label={type === "adjustment" ? "Final stock quantity" : "Quantity"}
             required
@@ -274,7 +274,7 @@ export function StockOpModal({
 
         {/* Warehouses */}
         {type === "transfer" ? (
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Field label="From warehouse" required>
               <Select value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)}>
                 <option value="">Select…</option>

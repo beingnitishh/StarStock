@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Icon } from "@/components/icons";
 import {
@@ -123,8 +124,8 @@ export default function WarehousesPage() {
       </div>
 
       {/* Create */}
-      <div className="flex items-end gap-2 rounded-xl border border-line bg-card p-4">
-        <div className="max-w-sm flex-1">
+      <div className="flex flex-col gap-2 rounded-xl border border-line bg-card p-4 sm:flex-row sm:items-end">
+        <div className="flex-1 sm:max-w-sm">
           <Field label="New warehouse name" required>
             <Input
               value={newName}
@@ -137,7 +138,7 @@ export default function WarehousesPage() {
             />
           </Field>
         </div>
-        <Button variant="primary" icon="plus" onClick={create} loading={creating} disabled={!newName.trim()}>
+        <Button variant="primary" icon="plus" onClick={create} loading={creating} disabled={!newName.trim()} className="sm:mb-0">
           Add warehouse
         </Button>
       </div>
@@ -159,17 +160,25 @@ export default function WarehousesPage() {
           {warehouses.map((w) => {
             const s = stats.get(w.id) ?? { skus: 0, pieces: 0 };
             return (
-              <div key={w.id} className="rounded-xl border border-line bg-card p-5">
+              <div
+                key={w.id}
+                className="group rounded-xl border border-line bg-card p-5 transition-colors hover:border-brand/40"
+              >
                 <div className="flex items-start justify-between">
-                  <div className="flex items-center gap-3">
-                    <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-soft text-brand">
+                  <Link
+                    href={`/warehouses/${w.id}`}
+                    className="flex flex-1 items-start gap-3 rounded-md transition-colors hover:text-brand"
+                  >
+                    <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-soft text-brand transition-transform group-hover:scale-[1.03]">
                       <Icon name="warehouse" className="h-4.5 w-4.5" />
                     </span>
-                    <div>
-                      <h2 className="font-display text-[15px] font-bold tracking-tight">{w.name}</h2>
+                    <div className="min-w-0 flex-1">
+                      <h2 className="font-display text-[15px] font-bold tracking-tight">
+                        {w.name}
+                      </h2>
                       <p className="text-[11px] text-ink-faint">Created {fmtDate(w.createdAt)}</p>
                     </div>
-                  </div>
+                  </Link>
                   <div className="flex gap-1">
                     <button
                       onClick={() => {
@@ -203,6 +212,15 @@ export default function WarehousesPage() {
                     </p>
                     <p className="mt-0.5 font-display text-lg font-bold">{fmtInt(s.pieces)}</p>
                   </div>
+                </div>
+                <div className="mt-4 flex justify-end">
+                  <Link
+                    href={`/warehouses/${w.id}`}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-1.5 text-xs font-semibold text-paper shadow-sm transition-colors hover:bg-brand-deep"
+                  >
+                    Open warehouse
+                    <Icon name="chevron-right" className="h-3.5 w-3.5" />
+                  </Link>
                 </div>
               </div>
             );

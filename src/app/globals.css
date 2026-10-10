@@ -38,11 +38,13 @@
 html,
 body {
   height: 100%;
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
   @apply bg-paper text-ink font-sans antialiased;
   font-feature-settings: "cv02", "cv03";
+  overflow-x: hidden;
 }
 
 ::selection {

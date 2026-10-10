@@ -156,7 +156,7 @@ export function ProductFormModal({
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Field label="SKU" required hint={editing ? "read-only" : "unique identifier"}>
             <Input
               value={sku}
@@ -177,7 +177,7 @@ export function ProductFormModal({
           </Field>
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Field label="Stock unit" required hint="unit of opening stock">
             <Select
               value={stockUnit}
@@ -200,7 +200,7 @@ export function ProductFormModal({
         </div>
 
         {!editing ? (
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Opening stock" required hint={`in ${stockUnit}s`}>
               <Input
                 type="number"

@@ -102,7 +102,7 @@ export default function UsersPage() {
 
   return (
     <div className="rise-in space-y-5">
-      <div className="flex items-end justify-between">
+      <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="font-display text-2xl font-bold tracking-tight">Users</h1>
           <p className="mt-1 text-sm text-ink-faint">
@@ -134,8 +134,8 @@ export default function UsersPage() {
           ))}
         </div>
       ) : (
-        <div className="overflow-hidden rounded-xl border border-line bg-card">
-          <table className="w-full text-left">
+        <div className="-mx-4 overflow-x-auto rounded-none border-y border-line bg-card px-4 sm:mx-0 sm:overflow-hidden sm:rounded-xl sm:border sm:px-0">
+          <table className="w-full min-w-[560px] text-left">
             <thead>
               <tr className="border-b border-line bg-surface text-[10px] font-bold uppercase tracking-[0.12em] text-ink-faint">
                 <th className="px-4 py-2.5">User</th>
@@ -184,7 +184,7 @@ export default function UsersPage() {
         width="max-w-md"
       >
         <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Field label="Username" required hint="3-30 chars">
               <Input
                 value={username}
