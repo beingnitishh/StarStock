@@ -1,0 +1,116 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: var(--font-manrope), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-space), var(--font-manrope), ui-sans-serif, sans-serif;
+  --font-mono: var(--font-jb), ui-monospace, "SF Mono", monospace;
+
+  --color-paper: #f2f1ea;
+  --color-surface: #f9f8f3;
+  --color-card: #fdfcf9;
+  --color-ink: #1e1f23;
+  --color-ink-soft: #5c5e66;
+  --color-ink-faint: #8f9198;
+  --color-line: #e4e1d4;
+  --color-line-strong: #d2cec0;
+
+  --color-brand: #0e6b5c;
+  --color-brand-deep: #0a5345;
+  --color-brand-soft: #e2efe9;
+  --color-brand-ring: #9cc9bc;
+
+  --color-coal: #17181d;
+  --color-coal-soft: #23252c;
+  --color-coal-line: #2e3138;
+
+  --color-in: #177a46;
+  --color-in-soft: #e1f1e5;
+  --color-out: #c03d3d;
+  --color-out-soft: #f9e6e3;
+  --color-move: #a16207;
+  --color-move-soft: #f6ecd2;
+  --color-adj: #565d6e;
+  --color-adj-soft: #e9ebee;
+  --color-warn: #b45309;
+  --color-warn-soft: #fbeed7;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  @apply bg-paper text-ink font-sans antialiased;
+  font-feature-settings: "cv02", "cv03";
+}
+
+::selection {
+  background: #0e6b5c;
+  color: #f2f1ea;
+}
+
+/* Subtle scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #c9c5b6 transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #c9c5b6;
+  border-radius: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.rise-in {
+  animation: rise-in 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.toast-in {
+  animation: toast-in 0.25s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes shake-x {
+  10%, 90% { transform: translateX(-1px); }
+  20%, 80% { transform: translateX(2px); }
+  30%, 50%, 70% { transform: translateX(-3px); }
+  40%, 60% { transform: translateX(3px); }
+}
+.shake-x {
+  animation: shake-x 0.5s both;
+}

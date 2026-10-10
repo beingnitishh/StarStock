@@ -1,0 +1,177 @@
+"use client";
+
+import { useState, type FormEvent } from "react";
+import { useRouter } from "next/navigation";
+import { Icon } from "@/components/icons";
+import { Button, Field, Input } from "@/components/ui";
+
+const DEMO_ACCOUNTS = [
+  { label: "Admin", username: "admin", password: "admin123" },
+  { label: "Stock Head", username: "stockhead", password: "stock123" },
+  { label: "Stock Boy", username: "stockboy", password: "stock123" },
+];
+
+export function LoginForm() {
+  const router = useRouter();
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [shakeKey, setShakeKey] = useState(0);
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Login failed.");
+      router.replace("/dashboard");
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Login failed.");
+      setShakeKey((k) => k + 1);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="grid min-h-screen lg:grid-cols-[440px_1fr]">
+      {/* Brand panel */}
+      <div className="relative hidden flex-col justify-between overflow-hidden bg-coal p-10 text-paper lg:flex">
+        <div
+          className="pointer-events-none absolute inset-0 opacity-[0.07]"
+          style={{
+            backgroundImage:
+              "radial-gradient(circle at 1px 1px, #f2f1ea 1px, transparent 0)",
+            backgroundSize: "26px 26px",
+          }}
+        />
+        <div className="relative flex items-center gap-2.5">
+          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand text-paper">
+            <Icon name="star" className="h-4.5 w-4.5" strokeWidth={2} />
+          </span>
+          <span className="font-display text-lg font-bold tracking-tight">Star Stock</span>
+        </div>
+
+        <div className="relative">
+          <h1 className="font-display text-4xl font-bold leading-[1.12] tracking-tight">
+            Every piece,
+            <br />
+            every carton,
+            <br />
+            <span className="text-[#7fc4b2]">accounted for.</span>
+          </h1>
+          <div className="mt-10 space-y-5">
+            {[
+              { icon: "warehouse", text: "Per-warehouse stock with combined totals" },
+              { icon: "swap", text: "Inbound, outbound, transfers and adjustments" },
+              { icon: "clock", text: "Timestamped history for every movement" },
+            ].map((f) => (
+              <div key={f.icon} className="flex items-center gap-3 text-sm text-paper/75">
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-coal-soft text-[#7fc4b2]">
+                  <Icon name={f.icon as "swap"} className="h-4 w-4" />
+                </span>
+                {f.text}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <p className="relative text-xs text-paper/40">
+          Star Stock · Inventory control workspace
+        </p>
+      </div>
+
+      {/* Form panel */}
+      <div className="flex items-center justify-center bg-paper px-6 py-12">
+        <div className="w-full max-w-sm">
+          <div className="mb-8 flex items-center gap-2.5 lg:hidden">
+            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand text-paper">
+              <Icon name="star" className="h-4 w-4" strokeWidth={2} />
+            </span>
+            <span className="font-display text-lg font-bold tracking-tight">Star Stock</span>
+          </div>
+
+          <h2 className="font-display text-2xl font-bold tracking-tight">Sign in</h2>
+          <p className="mt-1 text-sm text-ink-faint">
+            Use your Star Stock username and password.
+          </p>
+
+          <form onSubmit={submit} key={shakeKey} className={error ? "shake-x mt-6" : "mt-6"}>
+            <div className="space-y-4">
+              <Field label="Username" required>
+                <Input
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder="e.g. admin"
+                  autoComplete="username"
+                  autoFocus
+                />
+              </Field>
+              <Field label="Password" required>
+                <Input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  autoComplete="current-password"
+                />
+              </Field>
+            </div>
+
+            {error ? (
+              <div className="mt-4 flex items-start gap-2 rounded-lg border border-out/30 bg-out-soft px-3 py-2.5 text-[13px] font-medium text-out">
+                <Icon name="alert" className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                {error}
+              </div>
+            ) : null}
+
+            <Button
+              type="submit"
+              variant="primary"
+              loading={busy}
+              className="mt-5 w-full py-2.5"
+            >
+              Sign in
+            </Button>
+          </form>
+
+          <div className="mt-8 rounded-xl border border-line bg-card p-4">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-ink-faint">
+              Demo accounts
+            </p>
+            <div className="mt-2.5 grid grid-cols-3 gap-2">
+              {DEMO_ACCOUNTS.map((a) => (
+                <button
+                  key={a.username}
+                  type="button"
+                  onClick={() => {
+                    setUsername(a.username);
+                    setPassword(a.password);
+                    setError(null);
+                  }}
+                  className="rounded-lg border border-line-strong bg-surface px-2 py-2 text-center transition-colors hover:border-brand/60 hover:bg-brand-soft/50"
+                >
+                  <span className="block text-xs font-bold">{a.label}</span>
+                  <span className="mt-0.5 block font-mono text-[10px] text-ink-faint">
+                    {a.username}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <p className="mt-2.5 text-[11px] leading-relaxed text-ink-faint">
+              Click a role to fill its credentials, then sign in. Only Admin can create new
+              users.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
