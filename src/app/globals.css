@@ -87,8 +87,11 @@ input[type="number"] {
     transform: translateY(0);
   }
 }
+/* `backwards` (not `both`): a persisted transform on this wrapper would make it
+   the containing block for position:fixed descendants such as modals, which
+   would then be clipped to the wrapper instead of covering the viewport. */
 .rise-in {
-  animation: rise-in 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: rise-in 0.22s cubic-bezier(0.22, 1, 0.36, 1) backwards;
 }
 
 @keyframes toast-in {
