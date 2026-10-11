@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Icon } from "@/components/icons";
+import { useCanWrite } from "@/components/session";
 import { ProductFormModal } from "@/components/ProductFormModal";
 import { StockOpModal } from "@/components/StockOpModal";
 import { TxTable } from "@/components/TxTable";
@@ -23,6 +24,7 @@ export default function ProductPage() {
   const params = useParams<{ id: string }>();
   const id = params?.id;
   const toast = useToast();
+  const canWrite = useCanWrite();
 
   const [product, setProduct] = useState<ProductRow | null>(null);
   const [history, setHistory] = useState<TxRow[]>([]);
@@ -122,13 +124,15 @@ export default function ProductPage() {
             <div className="min-w-0">
               <div className="flex items-center gap-2.5">
                 <h1 className="truncate font-mono text-lg font-bold tracking-tight sm:text-xl">{product.sku}</h1>
-                <button
-                  onClick={() => setEditOpen(true)}
-                  className="rounded-md border border-line-strong p-1.5 text-ink-soft transition-colors hover:border-brand/50 hover:text-brand"
-                  title="Edit product"
-                >
-                  <Icon name="pencil" className="h-3.5 w-3.5" />
-                </button>
+                {canWrite ? (
+                  <button
+                    onClick={() => setEditOpen(true)}
+                    className="rounded-md border border-line-strong p-1.5 text-ink-soft transition-colors hover:border-brand/50 hover:text-brand"
+                    title="Edit product"
+                  >
+                    <Icon name="pencil" className="h-3.5 w-3.5" />
+                  </button>
+                ) : null}
               </div>
               <p className="mt-0.5 text-sm text-ink-soft">{product.name || "Unnamed product"}</p>
               <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
@@ -166,20 +170,26 @@ export default function ProductPage() {
               </p>
               <p className="font-mono text-xs text-ink-faint">{fmtInt(product.totalPieces)} pcs</p>
             </div>
-            <div className="grid grid-cols-2 gap-1.5 sm:flex sm:flex-wrap">
-              <Button size="sm" variant="in" icon="inbound" onClick={() => { setOpType("inbound"); setOpOpen(true); }}>
-                Inbound
-              </Button>
-              <Button size="sm" variant="out" icon="outbound" onClick={() => { setOpType("outbound"); setOpOpen(true); }}>
-                Outbound
-              </Button>
-              <Button size="sm" variant="secondary" icon="swap" onClick={() => { setOpType("transfer"); setOpOpen(true); }}>
-                Transfer
-              </Button>
-              <Button size="sm" variant="secondary" icon="sliders" onClick={() => { setOpType("adjustment"); setOpOpen(true); }}>
-                Adjust
-              </Button>
-            </div>
+            {canWrite ? (
+              <div className="grid grid-cols-2 gap-1.5 sm:flex sm:flex-wrap">
+                <Button size="sm" variant="in" icon="inbound" onClick={() => { setOpType("inbound"); setOpOpen(true); }}>
+                  Inbound
+                </Button>
+                <Button size="sm" variant="out" icon="outbound" onClick={() => { setOpType("outbound"); setOpOpen(true); }}>
+                  Outbound
+                </Button>
+                <Button size="sm" variant="secondary" icon="swap" onClick={() => { setOpType("transfer"); setOpOpen(true); }}>
+                  Transfer
+                </Button>
+                <Button size="sm" variant="secondary" icon="sliders" onClick={() => { setOpType("adjustment"); setOpOpen(true); }}>
+                  Adjust
+                </Button>
+              </div>
+            ) : (
+              <p className="rounded-lg bg-adj-soft px-3 py-2 text-[11px] font-semibold text-adj">
+                Read-only · stock changes are disabled
+              </p>
+            )}
           </div>
         </div>
       </div>
@@ -264,22 +274,26 @@ export default function ProductPage() {
         </div>
       </div>
 
-      <StockOpModal
-        open={opOpen}
-        onClose={() => setOpOpen(false)}
-        onDone={load}
-        products={[product]}
-        warehouses={warehouses}
-        initialType={opType}
-        initialProductId={product.id}
-      />
-      <ProductFormModal
-        open={editOpen}
-        onClose={() => setEditOpen(false)}
-        onDone={load}
-        warehouses={warehouses}
-        editing={product}
-      />
+      {canWrite ? (
+        <>
+          <StockOpModal
+            open={opOpen}
+            onClose={() => setOpOpen(false)}
+            onDone={load}
+            products={[product]}
+            warehouses={warehouses}
+            initialType={opType}
+            initialProductId={product.id}
+          />
+          <ProductFormModal
+            open={editOpen}
+            onClose={() => setEditOpen(false)}
+            onDone={load}
+            warehouses={warehouses}
+            editing={product}
+          />
+        </>
+      ) : null}
     </div>
   );
 }

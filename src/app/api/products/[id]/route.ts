@@ -7,6 +7,7 @@ import {
   parseUnit,
   readJson,
   requireUser,
+  requireWriter,
 } from "@/lib/api";
 import { fetchProductRow, fetchTransactionRows } from "@/lib/query";
 
@@ -31,7 +32,7 @@ export async function GET(_req: Request, ctx: Ctx) {
 
 export async function PATCH(req: Request, ctx: Ctx) {
   try {
-    await requireUser();
+    await requireWriter();
     const { id: rawId } = await ctx.params;
     const id = Number(rawId);
     if (!Number.isInteger(id)) throw new HttpError(400, "Invalid product id.");

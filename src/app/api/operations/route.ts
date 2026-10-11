@@ -5,7 +5,7 @@ import {
   parsePositiveInt,
   parseUnit,
   readJson,
-  requireUser,
+  requireWriter,
 } from "@/lib/api";
 import { performOperation, type OpType } from "@/lib/stock";
 
@@ -13,7 +13,7 @@ const TYPES = new Set<OpType>(["inbound", "outbound", "transfer", "adjustment"])
 
 export async function POST(req: Request) {
   try {
-    const user = await requireUser();
+    const user = await requireWriter();
     const body = await readJson(req);
 
     const type = String(body.type ?? "") as OpType;

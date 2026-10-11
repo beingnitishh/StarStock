@@ -1,4 +1,13 @@
-export type Role = "admin" | "stock_head" | "stock_boy";
+import type { Role } from "./roles";
+
+export {
+  canWriteStock,
+  isReadOnlyRole,
+  ROLE_DESCRIPTIONS,
+  ROLE_LABELS,
+  ROLES,
+  type Role,
+} from "./roles";
 
 export type SessionUser = {
   id: number;
@@ -52,10 +61,4 @@ export type TxRow = {
   userName: string | null;
   warehouseName: string | null;
   toWarehouseName: string | null;
-};
-
-export const ROLE_LABELS: Record<Role, string> = {
-  admin: "Admin",
-  stock_head: "Stock Head",
-  stock_boy: "Stock Boy",
 };

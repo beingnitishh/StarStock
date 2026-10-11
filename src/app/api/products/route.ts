@@ -8,6 +8,7 @@ import {
   parseUnit,
   readJson,
   requireUser,
+  requireWriter,
 } from "@/lib/api";
 import { fetchProductRows } from "@/lib/query";
 import { registerProduct } from "@/lib/products";
@@ -26,7 +27,7 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
-    const user = await requireUser();
+    const user = await requireWriter();
     const body = await readJson(req);
 
     const sku = String(body.sku ?? "").trim();

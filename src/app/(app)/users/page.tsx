@@ -12,7 +12,7 @@ import {
   useToast,
 } from "@/components/ui";
 import { fmtDate } from "@/lib/units";
-import { ROLE_LABELS, type Role } from "@/lib/types";
+import { ROLE_DESCRIPTIONS, ROLE_LABELS, ROLES, type Role } from "@/lib/types";
 
 type UserRow = {
   id: number;
@@ -28,6 +28,7 @@ const ROLE_BADGE: Record<Role, string> = {
   admin: "bg-brand-soft text-brand-deep",
   stock_head: "bg-move-soft text-move",
   stock_boy: "bg-adj-soft text-adj",
+  member: "bg-surface text-ink-soft ring-1 ring-line-strong",
 };
 
 export default function UsersPage() {
@@ -158,8 +159,9 @@ export default function UsersPage() {
         <div>
           <h1 className="font-display text-2xl font-bold tracking-tight">Users</h1>
           <p className="mt-1 text-sm text-ink-faint">
-            Add sign-in accounts for new staff and remove them when they leave. Only Admin can
-            do this.
+            Add sign-in accounts for new staff and remove them when they leave. Use the Member
+            role for people who only need to see current warehouse stock. Only Admin can do
+            this.
           </p>
         </div>
         <Button variant="primary" icon="plus" onClick={() => setOpen(true)}>
@@ -167,14 +169,19 @@ export default function UsersPage() {
         </Button>
       </div>
 
-      <div className="grid gap-3 rounded-xl border border-line bg-card p-4 sm:grid-cols-3">
-        {(Object.keys(ROLE_LABELS) as Role[]).map((r) => (
+      <div className="grid gap-3 rounded-xl border border-line bg-card p-4 sm:grid-cols-2 xl:grid-cols-4">
+        {ROLES.map((r) => (
           <div key={r} className="rounded-lg bg-surface px-3.5 py-3 ring-1 ring-line">
-            <p className="text-[11px] font-bold text-ink-soft">{ROLE_LABELS[r]}</p>
+            <p className="flex items-center gap-2 text-[11px] font-bold text-ink-soft">
+              {ROLE_LABELS[r]}
+              {r === "member" ? (
+                <span className="rounded-full bg-card px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-ink-faint ring-1 ring-line-strong">
+                  Read-only
+                </span>
+              ) : null}
+            </p>
             <p className="mt-1 text-[11px] leading-relaxed text-ink-faint">
-              {r === "admin"
-                ? "Full access, including user management."
-                : "Products, inbound/outbound, transfers, adjustments and Excel export."}
+              {ROLE_DESCRIPTIONS[r]}
             </p>
           </div>
         ))}
@@ -296,12 +303,19 @@ export default function UsersPage() {
             </Field>
             <Field label="Role" required>
               <Select value={role} onChange={(e) => setRole(e.target.value as Role)}>
-                <option value="admin">Admin</option>
-                <option value="stock_head">Stock Head</option>
-                <option value="stock_boy">Stock Boy</option>
+                {ROLES.map((r) => (
+                  <option key={r} value={r}>
+                    {ROLE_LABELS[r]}
+                    {r === "member" ? " (read-only)" : ""}
+                  </option>
+                ))}
               </Select>
             </Field>
           </div>
+          <p className="flex items-start gap-2 rounded-lg bg-surface px-3 py-2.5 text-[12px] leading-relaxed text-ink-soft ring-1 ring-line">
+            <Icon name="info" className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            {ROLE_DESCRIPTIONS[role]}
+          </p>
           <Field label="Display name" required>
             <Input
               value={displayName}

@@ -2,7 +2,7 @@ import { asc, eq } from "drizzle-orm";
 import ExcelJS from "exceljs";
 import { db } from "@/db";
 import { products, warehouses } from "@/db/schema";
-import { errResponse, HttpError, requireUser } from "@/lib/api";
+import { errResponse, HttpError, requireUser, requireWriter } from "@/lib/api";
 import { parseCsv } from "@/lib/csv";
 import { registerProduct } from "@/lib/products";
 import type { StockUnit } from "@/lib/units";
@@ -91,7 +91,7 @@ function parseUnitLoose(raw: string): StockUnit | null {
 
 export async function POST(req: Request) {
   try {
-    const user = await requireUser();
+    const user = await requireWriter();
     const form = await req.formData();
     const file = form.get("file");
     if (!(file instanceof File)) {

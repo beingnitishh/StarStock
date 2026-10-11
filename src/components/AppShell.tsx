@@ -3,8 +3,9 @@
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Icon, type IconName } from "./icons";
+import { SessionProvider } from "./session";
 import { ToastProvider, useToast } from "./ui";
-import { ROLE_LABELS, type SessionUser } from "@/lib/types";
+import { isReadOnlyRole, ROLE_LABELS, type SessionUser } from "@/lib/types";
 
 const NAV: Array<{ href: string; label: string; icon: IconName; adminOnly?: boolean }> = [
   { href: "/dashboard", label: "Dashboard", icon: "grid" },
@@ -111,7 +112,14 @@ function Sidebar({
           </span>
           <div className="min-w-0 flex-1 leading-tight">
             <div className="truncate text-[13px] font-semibold">{user.displayName}</div>
-            <div className="text-[11px] text-[#7fc4b2]">{ROLE_LABELS[user.role]}</div>
+            <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-[#7fc4b2]">
+              <span>{ROLE_LABELS[user.role]}</span>
+              {isReadOnlyRole(user.role) ? (
+                <span className="rounded-full bg-coal px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-paper/60 ring-1 ring-coal-line">
+                  View only
+                </span>
+              ) : null}
+            </div>
           </div>
           <button
             onClick={() => {
@@ -216,15 +224,27 @@ export function AppShell({
   user: SessionUser;
   children: React.ReactNode;
 }) {
+  const readOnly = isReadOnlyRole(user.role);
   return (
     <ToastProvider>
-      <MobileShell user={user} />
-      <Sidebar user={user} />
-      <main className="min-h-screen pt-14 lg:ml-[232px] lg:pt-0">
-        <div className="mx-auto max-w-[1240px] px-4 py-5 sm:px-6 sm:py-6 lg:px-8 lg:py-8">
-          {children}
-        </div>
-      </main>
+      <SessionProvider user={user}>
+        <MobileShell user={user} />
+        <Sidebar user={user} />
+        <main className="min-h-screen pt-14 lg:ml-[232px] lg:pt-0">
+          {readOnly ? (
+            <div className="border-b border-line bg-adj-soft">
+              <div className="mx-auto flex max-w-[1240px] items-center gap-2 px-4 py-2 text-[12px] font-semibold text-adj sm:px-6 lg:px-8">
+                <Icon name="info" className="h-3.5 w-3.5 shrink-0" />
+                Read-only access — you can view stock in every warehouse and download reports,
+                but not make changes.
+              </div>
+            </div>
+          ) : null}
+          <div className="mx-auto max-w-[1240px] px-4 py-5 sm:px-6 sm:py-6 lg:px-8 lg:py-8">
+            {children}
+          </div>
+        </main>
+      </SessionProvider>
     </ToastProvider>
   );
 }

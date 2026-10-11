@@ -35,6 +35,12 @@ async function main() {
         passwordHash: hashPassword("stock123"),
         role: "stock_boy",
       },
+      {
+        username: "member",
+        displayName: "Priya Nair",
+        passwordHash: hashPassword("member123"),
+        role: "member",
+      },
     ])
     .returning();
 
@@ -111,7 +117,9 @@ async function main() {
   `);
 
   console.log("Seed complete.");
-  console.log("Logins: admin/admin123, stockhead/stock123, stockboy/stock123");
+  console.log(
+    "Logins: admin/admin123, stockhead/stock123, stockboy/stock123, member/member123 (read-only)",
+  );
 }
 
 main()
