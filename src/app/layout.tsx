@@ -9,6 +9,7 @@ export const metadata: Metadata = {
   title: "Star Stock — Inventory Control",
   description:
     "Inventory management with SKU tracking, warehouses, piece/carton stock and full transaction history.",
+  icons: { icon: "/starstock-logo.svg" },
 };
 
 export const viewport = {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { Icon, type IconName } from "./icons";
 import { SessionProvider } from "./session";
@@ -90,9 +91,13 @@ function Sidebar({
       }`}
     >
       <div className="flex items-center gap-2.5 px-5 pb-6 pt-6">
-        <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand text-paper shadow-[0_0_0_1px_rgba(255,255,255,0.06)]">
-          <Icon name="star" className="h-4 w-4" strokeWidth={2} />
-        </span>
+        <Image
+          src="/starstock-logo.svg"
+          alt=""
+          width={1536}
+          height={1101}
+          className="h-9 w-auto shrink-0"
+        />
         <div className="leading-none">
           <div className="font-display text-[15px] font-bold tracking-tight">Star Stock</div>
           <div className="mt-1 text-[10px] font-medium uppercase tracking-[0.14em] text-paper/40">
@@ -187,9 +192,13 @@ function MobileShell({ user }: { user: SessionUser }) {
           </svg>
         </button>
         <div className="flex items-center gap-2">
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-brand text-paper">
-            <Icon name="star" className="h-3.5 w-3.5" strokeWidth={2} />
-          </span>
+          <Image
+            src="/starstock-logo.svg"
+            alt=""
+            width={1536}
+            height={1101}
+            className="h-8 w-auto"
+          />
           <span className="font-display text-[15px] font-bold tracking-tight">Star Stock</span>
         </div>
         <span

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icons";
 import { Button, Field, Input } from "@/components/ui";
@@ -47,9 +48,13 @@ export function LoginForm() {
           }}
         />
         <div className="relative flex items-center gap-2.5">
-          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand text-paper">
-            <Icon name="star" className="h-4.5 w-4.5" strokeWidth={2} />
-          </span>
+          <Image
+            src="/starstock-logo.svg"
+            alt=""
+            width={1536}
+            height={1101}
+            className="h-9 w-auto shrink-0"
+          />
           <span className="font-display text-lg font-bold tracking-tight">Star Stock</span>
         </div>
 
@@ -86,9 +91,13 @@ export function LoginForm() {
       <div className="flex items-center justify-center bg-paper px-6 py-12">
         <div className="w-full max-w-sm">
           <div className="mb-8 flex items-center gap-2.5 lg:hidden">
-            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand text-paper">
-              <Icon name="star" className="h-4 w-4" strokeWidth={2} />
-            </span>
+            <Image
+              src="/starstock-logo.svg"
+              alt=""
+              width={1536}
+              height={1101}
+              className="h-9 w-auto shrink-0"
+            />
             <span className="font-display text-lg font-bold tracking-tight">Star Stock</span>
           </div>
 
