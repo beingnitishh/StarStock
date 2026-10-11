@@ -7,11 +7,12 @@ import {
   readJson,
   requireAdmin,
 } from "@/lib/api";
-import { hashPassword, type Role } from "@/lib/auth";
+import { hashPassword } from "@/lib/auth";
+import { ROLES, type Role } from "@/lib/roles";
 
 export const dynamic = "force-dynamic";
 
-const ROLE_SET = new Set(["admin", "stock_head", "stock_boy"]);
+const ROLE_SET = new Set<string>(ROLES);
 
 export async function GET() {
   try {
@@ -56,7 +57,10 @@ export async function POST(req: Request) {
       throw new HttpError(400, "Password must be between 6 and 100 characters.");
     }
     if (!ROLE_SET.has(role)) {
-      throw new HttpError(400, "Role must be admin, stock_head or stock_boy.");
+      throw new HttpError(
+        400,
+        `Role must be one of: ${ROLES.join(", ")}.`,
+      );
     }
 
     const existing = await db

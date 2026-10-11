@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCanWrite } from "@/components/session";
 import { Icon } from "@/components/icons";
 import {
   Button,
@@ -16,6 +17,7 @@ import type { ProductRow, Warehouse } from "@/lib/types";
 
 export default function WarehousesPage() {
   const toast = useToast();
+  const canWrite = useCanWrite();
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [products, setProducts] = useState<ProductRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -123,25 +125,34 @@ export default function WarehousesPage() {
         </p>
       </div>
 
-      {/* Create */}
-      <div className="flex flex-col gap-2 rounded-xl border border-line bg-card p-4 sm:flex-row sm:items-end">
-        <div className="flex-1 sm:max-w-sm">
-          <Field label="New warehouse name" required>
-            <Input
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") create();
-              }}
-              placeholder="e.g. North Annex"
-              maxLength={60}
-            />
-          </Field>
+      {/* Create (hidden for read-only Member accounts) */}
+      {canWrite ? (
+        <div className="flex flex-col gap-2 rounded-xl border border-line bg-card p-4 sm:flex-row sm:items-end">
+          <div className="flex-1 sm:max-w-sm">
+            <Field label="New warehouse name" required>
+              <Input
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") create();
+                }}
+                placeholder="e.g. North Annex"
+                maxLength={60}
+              />
+            </Field>
+          </div>
+          <Button
+            variant="primary"
+            icon="plus"
+            onClick={create}
+            loading={creating}
+            disabled={!newName.trim()}
+            className="sm:mb-0"
+          >
+            Add warehouse
+          </Button>
         </div>
-        <Button variant="primary" icon="plus" onClick={create} loading={creating} disabled={!newName.trim()} className="sm:mb-0">
-          Add warehouse
-        </Button>
-      </div>
+      ) : null}
 
       {loading ? (
         <div className="space-y-2">
@@ -153,7 +164,11 @@ export default function WarehousesPage() {
         <EmptyState
           icon="warehouse"
           title="No warehouses yet"
-          text="Create your first warehouse above — every stock operation needs one."
+          text={
+            canWrite
+              ? "Create your first warehouse above — every stock operation needs one."
+              : "No warehouses have been created yet. Ask an Admin to add one."
+          }
         />
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
@@ -179,25 +194,27 @@ export default function WarehousesPage() {
                       <p className="text-[11px] text-ink-faint">Created {fmtDate(w.createdAt)}</p>
                     </div>
                   </Link>
-                  <div className="flex gap-1">
-                    <button
-                      onClick={() => {
-                        setRenaming(w);
-                        setRenameValue(w.name);
-                      }}
-                      className="rounded-md p-2 text-ink-faint transition-colors hover:bg-ink/5 hover:text-brand"
-                      title="Rename"
-                    >
-                      <Icon name="pencil" className="h-3.5 w-3.5" />
-                    </button>
-                    <button
-                      onClick={() => setDeleting(w)}
-                      className="rounded-md p-2 text-ink-faint transition-colors hover:bg-out-soft hover:text-out"
-                      title="Delete"
-                    >
-                      <Icon name="trash" className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
+                  {canWrite ? (
+                    <div className="flex gap-1">
+                      <button
+                        onClick={() => {
+                          setRenaming(w);
+                          setRenameValue(w.name);
+                        }}
+                        className="rounded-md p-2 text-ink-faint transition-colors hover:bg-ink/5 hover:text-brand"
+                        title="Rename"
+                      >
+                        <Icon name="pencil" className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        onClick={() => setDeleting(w)}
+                        className="rounded-md p-2 text-ink-faint transition-colors hover:bg-out-soft hover:text-out"
+                        title="Delete"
+                      >
+                        <Icon name="trash" className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
                 <div className="mt-4 grid grid-cols-2 gap-3">
                   <div className="rounded-lg bg-surface px-3.5 py-2.5 ring-1 ring-line">
@@ -228,35 +245,37 @@ export default function WarehousesPage() {
         </div>
       )}
 
-      {/* Rename modal */}
-      <Modal
-        open={!!renaming}
-        onClose={() => setRenaming(null)}
-        title="Rename warehouse"
-        subtitle={renaming ? `Currently “${renaming.name}”` : undefined}
-        width="max-w-sm"
-      >
-        <div className="space-y-4">
-          <Field label="New name" required>
-            <Input
-              value={renameValue}
-              onChange={(e) => setRenameValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") rename();
-              }}
-              maxLength={60}
-            />
-          </Field>
-          <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setRenaming(null)}>
-              Cancel
-            </Button>
-            <Button variant="primary" onClick={rename} disabled={!renameValue.trim()}>
-              Save
-            </Button>
+      {/* Rename + delete modals (write actions — hidden for read-only Member accounts) */}
+      {canWrite ? (
+        <>
+        <Modal
+          open={!!renaming}
+          onClose={() => setRenaming(null)}
+          title="Rename warehouse"
+          subtitle={renaming ? `Currently “${renaming.name}”` : undefined}
+          width="max-w-sm"
+        >
+          <div className="space-y-4">
+            <Field label="New name" required>
+              <Input
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") rename();
+                }}
+                maxLength={60}
+              />
+            </Field>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setRenaming(null)}>
+                Cancel
+              </Button>
+              <Button variant="primary" onClick={rename} disabled={!renameValue.trim()}>
+                Save
+              </Button>
+            </div>
           </div>
-        </div>
-      </Modal>
+        </Modal>
 
       {/* Delete confirm */}
       <Modal
@@ -280,6 +299,8 @@ export default function WarehousesPage() {
           </div>
         </div>
       </Modal>
+        </>
+      ) : null}
     </div>
   );
 }

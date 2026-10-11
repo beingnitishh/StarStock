@@ -1,4 +1,5 @@
 import { getSessionUser, type SessionUser } from "./auth";
+import { isReadOnlyRole } from "./roles";
 
 export class HttpError extends Error {
   constructor(
@@ -28,6 +29,21 @@ export async function requireAdmin(): Promise<SessionUser> {
   const user = await requireUser();
   if (user.role !== "admin") {
     throw new HttpError(403, "Only Admin can access this feature.");
+  }
+  return user;
+}
+
+/**
+ * Guards every endpoint that changes data. Member accounts are read-only and
+ * are rejected here even if they call the API directly.
+ */
+export async function requireWriter(): Promise<SessionUser> {
+  const user = await requireUser();
+  if (isReadOnlyRole(user.role)) {
+    throw new HttpError(
+      403,
+      "Your Member account is read-only. You can view stock but not make changes.",
+    );
   }
   return user;
 }

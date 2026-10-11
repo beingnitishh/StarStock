@@ -1,7 +1,13 @@
 import { and, asc, eq, gt } from "drizzle-orm";
 import { db } from "@/db";
 import { products, transactions, warehouseStock, warehouses } from "@/db/schema";
-import { errResponse, HttpError, readJson, requireUser } from "@/lib/api";
+import {
+  errResponse,
+  HttpError,
+  readJson,
+  requireUser,
+  requireWriter,
+} from "@/lib/api";
 import { skuCompare } from "@/lib/units";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -83,7 +89,7 @@ export async function GET(_req: Request, ctx: Ctx) {
 
 export async function PATCH(req: Request, ctx: Ctx) {
   try {
-    await requireUser();
+    await requireWriter();
     const { id: rawId } = await ctx.params;
     const id = Number(rawId);
     if (!Number.isInteger(id)) throw new HttpError(400, "Invalid warehouse id.");
@@ -115,7 +121,7 @@ export async function PATCH(req: Request, ctx: Ctx) {
 
 export async function DELETE(_req: Request, ctx: Ctx) {
   try {
-    await requireUser();
+    await requireWriter();
     const { id: rawId } = await ctx.params;
     const id = Number(rawId);
     if (!Number.isInteger(id)) throw new HttpError(400, "Invalid warehouse id.");

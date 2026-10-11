@@ -1,7 +1,13 @@
 import { asc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { warehouses } from "@/db/schema";
-import { errResponse, HttpError, readJson, requireUser } from "@/lib/api";
+import {
+  errResponse,
+  HttpError,
+  readJson,
+  requireUser,
+  requireWriter,
+} from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
@@ -20,7 +26,7 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
-    const user = await requireUser();
+    const user = await requireWriter();
     const body = await readJson(req);
     const name = String(body.name ?? "").trim();
     if (name.length < 2 || name.length > 60) {

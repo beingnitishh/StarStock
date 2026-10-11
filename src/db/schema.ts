@@ -14,7 +14,10 @@ export const users = pgTable("users", {
   username: text("username").notNull().unique(),
   passwordHash: text("password_hash").notNull(),
   displayName: text("display_name").notNull(),
-  role: text("role", { enum: ["admin", "stock_head", "stock_boy"] })
+  role: text("role", {
+    // `member` is a read-only account: it can view stock but not change it.
+    enum: ["admin", "stock_head", "stock_boy", "member"],
+  })
     .notNull()
     .default("stock_boy"),
   createdAt: timestamp("created_at", { withTimezone: true })

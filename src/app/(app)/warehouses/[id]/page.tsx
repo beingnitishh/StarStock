@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { useCanWrite } from "@/components/session";
 import { Icon } from "@/components/icons";
 import {
   Button,
@@ -36,6 +37,7 @@ export default function WarehouseDetailPage() {
   const id = params?.id;
   const wid = Number(id);
   const toast = useToast();
+  const canWrite = useCanWrite();
 
   const [detail, setDetail] = useState<WarehouseDetail | null>(null);
   const [allWarehouses, setAllWarehouses] = useState<Warehouse[]>([]);
@@ -199,16 +201,18 @@ export default function WarehouseDetailPage() {
             <div className="min-w-0">
               <div className="flex items-center gap-2.5">
                 <h1 className="truncate font-display text-xl font-bold tracking-tight sm:text-2xl">{warehouse.name}</h1>
-                <button
-                  onClick={() => {
-                    setRenameValue(warehouse.name);
-                    setRenaming(true);
-                  }}
-                  className="rounded-md border border-line-strong p-1.5 text-ink-soft transition-colors hover:border-brand/50 hover:text-brand"
-                  title="Rename warehouse"
-                >
-                  <Icon name="pencil" className="h-3.5 w-3.5" />
-                </button>
+                {canWrite ? (
+                  <button
+                    onClick={() => {
+                      setRenameValue(warehouse.name);
+                      setRenaming(true);
+                    }}
+                    className="rounded-md border border-line-strong p-1.5 text-ink-soft transition-colors hover:border-brand/50 hover:text-brand"
+                    title="Rename warehouse"
+                  >
+                    <Icon name="pencil" className="h-3.5 w-3.5" />
+                  </button>
+                ) : null}
               </div>
               <p className="mt-1 text-xs text-ink-faint">Warehouse created {fmtDate(warehouse.createdAt)}</p>
               <div className="mt-3 flex flex-wrap gap-2 text-[11px] sm:gap-3">
@@ -374,41 +378,43 @@ export default function WarehouseDetailPage() {
         )}
       </div>
 
-      {/* Rename modal */}
-      <Modal
-        open={renaming}
-        onClose={() => setRenaming(false)}
-        title="Rename warehouse"
-        subtitle={`Currently “${warehouse.name}”`}
-        width="max-w-sm"
-      >
-        <div className="space-y-4">
-          <Field label="New name" required>
-            <Input
-              value={renameValue}
-              onChange={(e) => setRenameValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") saveRename();
-              }}
-              maxLength={60}
-              autoFocus
-            />
-          </Field>
-          <div className="flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => setRenaming(false)}>
-              Cancel
-            </Button>
-            <Button
-              variant="primary"
-              onClick={saveRename}
-              loading={savingName}
-              disabled={!renameValue.trim() || renameValue.trim() === warehouse.name}
-            >
-              Save
-            </Button>
+      {/* Rename modal (write action — hidden for read-only Member accounts) */}
+      {canWrite ? (
+        <Modal
+          open={renaming}
+          onClose={() => setRenaming(false)}
+          title="Rename warehouse"
+          subtitle={`Currently “${warehouse.name}”`}
+          width="max-w-sm"
+        >
+          <div className="space-y-4">
+            <Field label="New name" required>
+              <Input
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") saveRename();
+                }}
+                maxLength={60}
+                autoFocus
+              />
+            </Field>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setRenaming(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                onClick={saveRename}
+                loading={savingName}
+                disabled={!renameValue.trim() || renameValue.trim() === warehouse.name}
+              >
+                Save
+              </Button>
+            </div>
           </div>
-        </div>
-      </Modal>
+        </Modal>
+      ) : null}
     </div>
   );
 }

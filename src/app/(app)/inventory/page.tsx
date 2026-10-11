@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icons";
 import { BulkUploadModal } from "@/components/BulkUploadModal";
 import { ProductFormModal } from "@/components/ProductFormModal";
+import { useCanWrite } from "@/components/session";
 import { StockOpModal } from "@/components/StockOpModal";
 import {
   Button,
@@ -23,6 +24,7 @@ type SortKey = "sku-asc" | "sku-desc" | "stock-desc" | "stock-asc";
 export default function InventoryPage() {
   const router = useRouter();
   const toast = useToast();
+  const canWrite = useCanWrite();
   const [products, setProducts] = useState<ProductRow[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [loading, setLoading] = useState(true);
@@ -129,22 +131,31 @@ export default function InventoryPage() {
             <span className="hidden sm:inline">Export Excel</span>
             <span className="sm:hidden">Export</span>
           </Button>
-          <Button variant="secondary" icon="upload" onClick={() => setBulkOpen(true)} className="flex-1 justify-center sm:flex-none">
-            <span className="hidden sm:inline">Bulk upload</span>
-            <span className="sm:hidden">Bulk</span>
-          </Button>
-          <Button
-            variant="primary"
-            icon="plus"
-            onClick={() => {
-              setEditing(null);
-              setFormOpen(true);
-            }}
-            className="flex-1 justify-center sm:flex-none"
-          >
-            <span className="hidden sm:inline">List product</span>
-            <span className="sm:hidden">New</span>
-          </Button>
+          {canWrite ? (
+            <>
+              <Button
+                variant="secondary"
+                icon="upload"
+                onClick={() => setBulkOpen(true)}
+                className="flex-1 justify-center sm:flex-none"
+              >
+                <span className="hidden sm:inline">Bulk upload</span>
+                <span className="sm:hidden">Bulk</span>
+              </Button>
+              <Button
+                variant="primary"
+                icon="plus"
+                onClick={() => {
+                  setEditing(null);
+                  setFormOpen(true);
+                }}
+                className="flex-1 justify-center sm:flex-none"
+              >
+                <span className="hidden sm:inline">List product</span>
+                <span className="sm:hidden">New</span>
+              </Button>
+            </>
+          ) : null}
         </div>
       </div>
 
@@ -211,7 +222,7 @@ export default function InventoryPage() {
               : "Try a different search term or clear the filters."
           }
           action={
-            products.length === 0 ? (
+            products.length === 0 && canWrite ? (
               <Button
                 variant="primary"
                 icon="plus"
@@ -234,7 +245,7 @@ export default function InventoryPage() {
                 <th className="px-4 py-2.5">Carton contains</th>
                 <th className="px-4 py-2.5">Stock by warehouse</th>
                 <th className="px-4 py-2.5">Total stock</th>
-                <th className="px-4 py-2.5 text-right">Actions</th>
+                {canWrite ? <th className="px-4 py-2.5 text-right">Actions</th> : null}
               </tr>
             </thead>
             <tbody className="divide-y divide-line">
@@ -296,32 +307,37 @@ export default function InventoryPage() {
                     <td className="whitespace-nowrap px-4 py-3">
                       <StockAmount pieces={p.totalPieces} per={p.cartonContains} />
                     </td>
-                    <td className="px-4 py-3">
-                      <div className="flex justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
-                        <Button
-                          size="sm"
-                          variant="in"
-                          icon="inbound"
-                          onClick={() =>
-                            setOpModal({ open: true, type: "inbound", productId: p.id })
-                          }
-                          aria-label="Inbound"
+                    {canWrite ? (
+                      <td className="px-4 py-3">
+                        <div
+                          className="flex justify-end gap-1.5"
+                          onClick={(e) => e.stopPropagation()}
                         >
-                          <span className="hidden sm:inline">Inbound</span>
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="out"
-                          icon="outbound"
-                          onClick={() =>
-                            setOpModal({ open: true, type: "outbound", productId: p.id })
-                          }
-                          aria-label="Outbound"
-                        >
-                          <span className="hidden sm:inline">Outbound</span>
-                        </Button>
-                      </div>
-                    </td>
+                          <Button
+                            size="sm"
+                            variant="in"
+                            icon="inbound"
+                            onClick={() =>
+                              setOpModal({ open: true, type: "inbound", productId: p.id })
+                            }
+                            aria-label="Inbound"
+                          >
+                            <span className="hidden sm:inline">Inbound</span>
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="out"
+                            icon="outbound"
+                            onClick={() =>
+                              setOpModal({ open: true, type: "outbound", productId: p.id })
+                            }
+                            aria-label="Outbound"
+                          >
+                            <span className="hidden sm:inline">Outbound</span>
+                          </Button>
+                        </div>
+                      </td>
+                    ) : null}
                   </tr>
                 );
               })}
@@ -330,24 +346,28 @@ export default function InventoryPage() {
         </div>
       )}
 
-      {/* Modals */}
-      <StockOpModal
-        open={opModal.open}
-        onClose={() => setOpModal((m) => ({ ...m, open: false }))}
-        onDone={load}
-        products={products}
-        warehouses={warehouses}
-        initialType={opModal.type}
-        initialProductId={opModal.productId}
-      />
-      <ProductFormModal
-        open={formOpen}
-        onClose={() => setFormOpen(false)}
-        onDone={load}
-        warehouses={warehouses}
-        editing={editing}
-      />
-      <BulkUploadModal open={bulkOpen} onClose={() => setBulkOpen(false)} onDone={load} />
+      {/* Modals (write actions — hidden for read-only Member accounts) */}
+      {canWrite ? (
+        <>
+          <StockOpModal
+            open={opModal.open}
+            onClose={() => setOpModal((m) => ({ ...m, open: false }))}
+            onDone={load}
+            products={products}
+            warehouses={warehouses}
+            initialType={opModal.type}
+            initialProductId={opModal.productId}
+          />
+          <ProductFormModal
+            open={formOpen}
+            onClose={() => setFormOpen(false)}
+            onDone={load}
+            warehouses={warehouses}
+            editing={editing}
+          />
+          <BulkUploadModal open={bulkOpen} onClose={() => setBulkOpen(false)} onDone={load} />
+        </>
+      ) : null}
     </div>
   );
 }
