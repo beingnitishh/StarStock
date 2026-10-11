@@ -166,9 +166,9 @@ export default async function DashboardPage() {
         />
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
         {/* Recent activity */}
-        <div className="rounded-xl border border-line bg-card">
+        <div className="min-w-0 rounded-xl border border-line bg-card">
           <div className="flex items-center justify-between border-b border-line px-5 py-3.5">
             <h2 className="font-display text-sm font-bold tracking-tight">Recent activity</h2>
             <Link href="/transactions" className="text-xs font-semibold text-brand hover:underline">
@@ -217,7 +217,7 @@ export default async function DashboardPage() {
           </div>
         </div>
 
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           {/* Low stock */}
           <div className="rounded-xl border border-line bg-card">
             <div className="flex items-center justify-between border-b border-line px-5 py-3.5">

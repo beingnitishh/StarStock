@@ -194,9 +194,9 @@ export default function ProductPage() {
         </div>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[360px_1fr]">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
         {/* Warehouse stock */}
-        <div className="h-fit overflow-hidden rounded-xl border border-line bg-card">
+        <div className="h-fit min-w-0 overflow-hidden rounded-xl border border-line bg-card">
           <div className="border-b border-line px-4 py-3.5 sm:px-5">
             <h2 className="font-display text-sm font-bold tracking-tight">Stock by warehouse</h2>
           </div>
@@ -246,7 +246,7 @@ export default function ProductPage() {
         </div>
 
         {/* History */}
-        <div className="space-y-3">
+        <div className="min-w-0 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <h2 className="font-display text-sm font-bold tracking-tight">
