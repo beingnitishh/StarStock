@@ -109,7 +109,7 @@ export function Button({
 } & ButtonHTMLAttributes<HTMLButtonElement>) {
   const base =
     "inline-flex items-center justify-center gap-1.5 rounded-lg font-semibold transition-all duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand disabled:cursor-not-allowed disabled:opacity-50 active:scale-[0.98]";
-  const sizes = size === "sm" ? "px-2.5 py-1.5 text-xs" : "px-3.5 py-2 text-[13px]";
+  const sizes = size === "sm" ? "min-h-10 px-2.5 py-1.5 text-xs sm:min-h-0" : "px-3.5 py-2 text-[13px]";
   const variants: Record<ButtonVariant, string> = {
     primary: "bg-brand text-paper hover:bg-brand-deep shadow-sm",
     secondary:
