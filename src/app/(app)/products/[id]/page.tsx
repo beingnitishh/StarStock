@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { Icon } from "@/components/icons";
 import { useCanWrite } from "@/components/session";
 import { ProductFormModal } from "@/components/ProductFormModal";
@@ -11,6 +11,7 @@ import { TxTable } from "@/components/TxTable";
 import {
   Button,
   EmptyState,
+  Modal,
   ProductThumb,
   Spinner,
   StockAmount,
@@ -23,6 +24,7 @@ import type { OpType, ProductRow, TxRow, Warehouse } from "@/lib/types";
 export default function ProductPage() {
   const params = useParams<{ id: string }>();
   const id = params?.id;
+  const router = useRouter();
   const toast = useToast();
   const canWrite = useCanWrite();
 
@@ -36,6 +38,8 @@ export default function ProductPage() {
   const [opType, setOpType] = useState<OpType>("inbound");
   const [opOpen, setOpOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -100,6 +104,26 @@ export default function ProductPage() {
   }
 
   const totalCtn = splitCartons(product.totalPieces, product.cartonContains);
+  const hasStock = product.totalPieces > 0;
+
+  const remove = async () => {
+    const target = product;
+    if (deleting || !target) return;
+    setDeleting(true);
+    try {
+      const res = await fetch(`/api/products/${target.id}`, { method: "DELETE" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "Delete failed.");
+      toast.push("success", "Product deleted", `${target.sku} was removed from the catalog.`);
+      router.replace("/inventory");
+    } catch (e) {
+      toast.push("error", "Could not delete product", e instanceof Error ? e.message : undefined);
+      setDeleting(false);
+      // The failure is often stale stock counts (someone else moved stock), so
+      // reload to show the current numbers behind the confirm dialog.
+      void load();
+    }
+  };
 
   return (
     <div className="rise-in space-y-5">
@@ -171,19 +195,31 @@ export default function ProductPage() {
               <p className="font-mono text-xs text-ink-faint">{fmtInt(product.totalPieces)} pcs</p>
             </div>
             {canWrite ? (
-              <div className="grid grid-cols-2 gap-1.5 sm:flex sm:flex-wrap">
-                <Button size="sm" variant="in" icon="inbound" onClick={() => { setOpType("inbound"); setOpOpen(true); }}>
-                  Inbound
-                </Button>
-                <Button size="sm" variant="out" icon="outbound" onClick={() => { setOpType("outbound"); setOpOpen(true); }}>
-                  Outbound
-                </Button>
-                <Button size="sm" variant="secondary" icon="swap" onClick={() => { setOpType("transfer"); setOpOpen(true); }}>
-                  Transfer
-                </Button>
-                <Button size="sm" variant="secondary" icon="sliders" onClick={() => { setOpType("adjustment"); setOpOpen(true); }}>
-                  Adjust
-                </Button>
+              <div className="space-y-1.5">
+                <div className="grid grid-cols-2 gap-1.5 sm:flex sm:flex-wrap">
+                  <Button size="sm" variant="in" icon="inbound" onClick={() => { setOpType("inbound"); setOpOpen(true); }}>
+                    Inbound
+                  </Button>
+                  <Button size="sm" variant="out" icon="outbound" onClick={() => { setOpType("outbound"); setOpOpen(true); }}>
+                    Outbound
+                  </Button>
+                  <Button size="sm" variant="secondary" icon="swap" onClick={() => { setOpType("transfer"); setOpOpen(true); }}>
+                    Transfer
+                  </Button>
+                  <Button size="sm" variant="secondary" icon="sliders" onClick={() => { setOpType("adjustment"); setOpOpen(true); }}>
+                    Adjust
+                  </Button>
+                </div>
+                <div className="flex justify-end">
+                  <button
+                    onClick={() => setDeleteOpen(true)}
+                    className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-ink-faint transition-colors hover:bg-out-soft hover:text-out"
+                    title="Delete this product"
+                  >
+                    <Icon name="trash" className="h-3.5 w-3.5" />
+                    Delete product
+                  </button>
+                </div>
               </div>
             ) : (
               <p className="rounded-lg bg-adj-soft px-3 py-2 text-[11px] font-semibold text-adj">
@@ -292,6 +328,47 @@ export default function ProductPage() {
             warehouses={warehouses}
             editing={product}
           />
+          <Modal
+            open={deleteOpen}
+            onClose={() => {
+              if (!deleting) setDeleteOpen(false);
+            }}
+            title="Delete product?"
+            subtitle={`${product.sku}${product.name ? ` · ${product.name}` : ""}`}
+            width="max-w-sm"
+          >
+            <div className="space-y-4">
+              {hasStock ? (
+                <p className="rounded-lg bg-out-soft px-3 py-2.5 text-[13px] font-semibold leading-relaxed text-out">
+                  This product still holds {fmtInt(product.totalPieces)} pcs across warehouses.
+                  Record an outbound or adjustment to bring the stock to zero, then delete it.
+                </p>
+              ) : (
+                <p className="text-sm leading-relaxed text-ink-soft">
+                  “{product.sku}” will be permanently removed from the catalog, together with its
+                  stock records and stock movement history. This cannot be undone.
+                </p>
+              )}
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="ghost"
+                  onClick={() => setDeleteOpen(false)}
+                  disabled={deleting}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="danger"
+                  icon="trash"
+                  onClick={remove}
+                  loading={deleting}
+                  disabled={hasStock}
+                >
+                  Delete
+                </Button>
+              </div>
+            </div>
+          </Modal>
         </>
       ) : null}
     </div>
