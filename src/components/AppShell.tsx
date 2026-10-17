@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Icon, type IconName } from "./icons";
 import { SessionProvider } from "./session";
@@ -32,11 +33,12 @@ function NavItems({
           pathname === n.href ||
           (n.href !== "/dashboard" && pathname.startsWith(n.href + "/"));
         return (
-          <a
+          <Link
             key={n.href}
             href={n.href}
             onClick={onNavigate}
-            className={`group relative flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-semibold transition-colors ${
+            aria-current={active ? "page" : undefined}
+            className={`motion-nav group relative flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-semibold transition-colors ${
               active
                 ? "bg-coal-soft text-paper"
                 : "text-paper/55 hover:bg-coal-soft/60 hover:text-paper"
@@ -50,7 +52,7 @@ function NavItems({
               className={`h-4 w-4 ${active ? "text-[#7fc4b2]" : "text-paper/45 group-hover:text-paper/80"}`}
             />
             {n.label}
-          </a>
+          </Link>
         );
       })}
     </>
@@ -213,11 +215,11 @@ function MobileShell({ user }: { user: SessionUser }) {
       {open ? (
         <div className="fixed inset-0 z-50 lg:hidden">
           <div
-            className="absolute inset-0 bg-coal/60"
+            className="fade-in absolute inset-0 bg-coal/60"
             onClick={() => setOpen(false)}
             aria-hidden
           />
-          <div className="absolute inset-y-0 left-0 flex rise-in">
+          <div className="drawer-in absolute inset-y-0 left-0 flex">
             <Sidebar user={user} mobile onClose={() => setOpen(false)} />
           </div>
         </div>

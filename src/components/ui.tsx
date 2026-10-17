@@ -108,16 +108,16 @@ export function Button({
   icon?: IconName;
 } & ButtonHTMLAttributes<HTMLButtonElement>) {
   const base =
-    "inline-flex items-center justify-center gap-1.5 rounded-lg font-semibold transition-all duration-150 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand disabled:cursor-not-allowed disabled:opacity-50 active:scale-[0.98]";
+    "inline-flex items-center justify-center gap-1.5 rounded-lg font-semibold motion-button focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand disabled:cursor-not-allowed disabled:opacity-50";
   const sizes = size === "sm" ? "min-h-10 px-2.5 py-1.5 text-xs sm:min-h-0" : "px-3.5 py-2 text-[13px]";
   const variants: Record<ButtonVariant, string> = {
     primary: "bg-brand text-paper hover:bg-brand-deep shadow-sm",
     secondary:
       "border border-line-strong bg-card text-ink hover:border-brand/50 hover:bg-brand-soft/40",
     ghost: "text-ink-soft hover:bg-ink/5 hover:text-ink",
-    danger: "bg-out text-paper hover:brightness-95 shadow-sm",
-    in: "bg-in text-paper hover:brightness-95 shadow-sm",
-    out: "bg-out text-paper hover:brightness-95 shadow-sm",
+    danger: "bg-out text-paper hover:bg-out/90 shadow-sm",
+    in: "bg-in text-paper hover:bg-in/90 shadow-sm",
+    out: "bg-out text-paper hover:bg-out/90 shadow-sm",
   };
   return (
     <button className={`${base} ${sizes} ${variants[variant]} ${className}`} disabled={disabled || loading} {...rest}>
@@ -130,7 +130,7 @@ export function Button({
 /* ---------------------------------- Inputs ---------------------------------- */
 
 const fieldCls =
-  "w-full rounded-lg border border-line-strong bg-card px-3 py-2 text-sm text-ink outline-none transition-colors placeholder:text-ink-faint focus:border-brand focus:ring-2 focus:ring-brand-ring/50";
+  "w-full rounded-lg border border-line-strong bg-card px-3 py-2 text-sm text-ink outline-none motion-field placeholder:text-ink-faint focus:border-brand focus:ring-2 focus:ring-brand-ring/50";
 
 export function Input(props: InputHTMLAttributes<HTMLInputElement>) {
   const { className = "", ...rest } = props;
@@ -211,9 +211,9 @@ export function Modal({
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-[70] flex items-end overflow-y-auto sm:items-start sm:justify-center sm:p-4 sm:pt-[8vh]">
-      <div className="fixed inset-0 bg-coal/55" onClick={onClose} />
+      <div className="fade-in fixed inset-0 bg-coal/55" onClick={onClose} />
       <div
-        className={`rise-in relative w-full rounded-t-xl border border-line bg-surface shadow-2xl shadow-coal/30 sm:rounded-xl ${width} max-h-[92vh] overflow-y-auto`}
+        className={`modal-in relative w-full rounded-t-xl border border-line bg-surface shadow-2xl shadow-coal/30 sm:rounded-xl ${width} max-h-[92vh] overflow-y-auto`}
       >
         <div className="sticky top-0 z-10 flex items-start justify-between border-b border-line bg-surface/95 px-4 py-4 backdrop-blur sm:px-5">
           <div className="min-w-0 pr-2">

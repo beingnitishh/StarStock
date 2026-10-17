@@ -107,7 +107,7 @@ input[type="number"] {
   }
 }
 .toast-in {
-  animation: toast-in 0.25s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: toast-in 0.25s cubic-bezier(0.22, 1, 0.36, 1) backwards;
 }
 
 @keyframes shake-x {
@@ -118,4 +118,75 @@ input[type="number"] {
 }
 .shake-x {
   animation: shake-x 0.5s both;
+}
+
+/* Keep motion short and event-driven. Only entrance opacity/transform are
+   animated; no layout animation, perpetual decoration, or retained layers. */
+:root {
+  --motion-fast: 150ms;
+  --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.motion-button {
+  transition: background-color var(--motion-fast), color var(--motion-fast),
+    border-color var(--motion-fast), opacity var(--motion-fast),
+    transform var(--motion-fast) var(--motion-ease);
+}
+.motion-button:active:not(:disabled) {
+  transform: scale(0.98);
+}
+.motion-field {
+  transition: border-color var(--motion-fast), background-color var(--motion-fast),
+    box-shadow var(--motion-fast);
+}
+.motion-nav svg {
+  transition: color var(--motion-fast), transform var(--motion-fast) var(--motion-ease);
+}
+@media (hover: hover) and (pointer: fine) {
+  .motion-button:hover:not(:disabled) {
+    transform: translateY(-1px);
+  }
+  .motion-button:active:not(:disabled) {
+    transform: scale(0.98);
+  }
+  .motion-nav:hover svg {
+    transform: translateX(2px);
+  }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes modal-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.99); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes drawer-in {
+  from { opacity: 0; transform: translateX(-20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+.fade-in {
+  animation: fade-in 180ms ease-out backwards;
+}
+.modal-in {
+  animation: modal-in 220ms var(--motion-ease) backwards;
+}
+.drawer-in {
+  animation: drawer-in 220ms var(--motion-ease) backwards;
+}
+
+/* Includes existing page/toast/error effects and Tailwind loading animations.
+   Loading indicators remain visible, but static, when motion is reduced. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+  .motion-button:hover:not(:disabled),
+  .motion-button:active:not(:disabled),
+  .motion-nav:hover svg {
+    transform: none;
+  }
 }
