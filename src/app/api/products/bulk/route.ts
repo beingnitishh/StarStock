@@ -1,27 +1,188 @@
-import { asc, eq } from "drizzle-orm";
+import { asc } from "drizzle-orm";
 import ExcelJS from "exceljs";
 import { db } from "@/db";
 import { products, warehouses } from "@/db/schema";
 import { errResponse, HttpError, requireUser, requireWriter } from "@/lib/api";
 import { parseCsv } from "@/lib/csv";
-import { registerProduct } from "@/lib/products";
+import { isAllWarehouses, registerProduct } from "@/lib/products";
 import type { StockUnit } from "@/lib/units";
 
 export const dynamic = "force-dynamic";
 
-const TEMPLATE = [
-  "SKU,Product Name,Image URL,Opening Stock,Unit,Carton Contains,Warehouse",
-  "BTL-750,Sparkling Water 750ml,https://example.com/water.jpg,10,carton,24,Main Warehouse",
-  "TEA-100,Black Tea 100 Bags,,120,piece,12,Main Warehouse",
-].join("\n");
-
+// ---------------------------------------------------------------------------
+// Template download (XLSX with dropdowns)
+// ---------------------------------------------------------------------------
 export async function GET() {
   try {
     await requireUser();
-    return new Response(TEMPLATE, {
+    const warehouseRows = await db
+      .select()
+      .from(warehouses)
+      .orderBy(asc(warehouses.id));
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = "Star Stock";
+    wb.created = new Date();
+
+    // Main sheet
+    const ws = wb.addWorksheet("Products", {
+      views: [{ state: "frozen", ySplit: 1 }],
+      properties: { tabColor: { argb: "FF0E6B5C" } },
+    });
+
+    ws.columns = [
+      { header: "SKU", key: "sku", width: 16 },
+      { header: "Product Name", key: "name", width: 30 },
+      { header: "Image URL", key: "image", width: 36 },
+      { header: "Opening Stock", key: "opening", width: 14 },
+      { header: "Unit", key: "unit", width: 12 },
+      { header: "Carton Contains", key: "carton", width: 16 },
+      { header: "Warehouse", key: "warehouse", width: 24 },
+    ] as Partial<ExcelJS.Column>[];
+
+    const headerRow = ws.getRow(1);
+    headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
+    headerRow.fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: "FF0E6B5C" },
+    };
+    headerRow.alignment = { vertical: "middle", horizontal: "center" };
+    headerRow.commit();
+
+    const firstWh = warehouseRows[0]?.name ?? "Main Warehouse";
+    // Example rows demonstrating single warehouse and All Warehouses
+    ws.addRow({
+      sku: "BTL-750",
+      name: "Sparkling Water 750ml",
+      image: "https://example.com/water.jpg",
+      opening: 10,
+      unit: "carton",
+      carton: 24,
+      warehouse: firstWh,
+    });
+    ws.addRow({
+      sku: "TEA-100",
+      name: "Black Tea 100 Bags",
+      image: "",
+      opening: 120,
+      unit: "piece",
+      carton: 12,
+      warehouse: "All Warehouses",
+    });
+    // Add an empty row for user to start typing, but with helpful placeholder
+    // (leave it blank so validation still works)
+
+    // Style example rows faintly
+    for (let r = 2; r <= 3; r++) {
+      const row = ws.getRow(r);
+      row.eachCell((cell) => {
+        cell.fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: "FFF6F8F6" },
+        };
+        cell.font = { color: { argb: "FF52525B" }, size: 11 };
+      });
+    }
+
+    // Instructions / note row (row 5 onward could be instructions, but keep sheet clean)
+    // Auto filter
+    ws.autoFilter = {
+      from: { row: 1, column: 1 },
+      to: { row: 1, column: 7 },
+    };
+
+    // Freeze + basic protections: allow all but give hints
+    // Add comments to header cells
+    ws.getCell("G1").note = "Choose a warehouse or All Warehouses to stock in every warehouse.";
+    ws.getCell("E1").note = "Choose piece or carton.";
+
+    // Data validations: Unit and Warehouse downgroups
+    // Hidden list sheet for warehouses
+    const lists = wb.addWorksheet("Lists");
+    // Populate warehouse names + All Warehouses
+    // Use A column for warehouse list
+    let listIdx = 1;
+    for (const w of warehouseRows) {
+      lists.getCell(`A${listIdx}`).value = w.name;
+      listIdx++;
+    }
+    // Always add All Warehouses as last option (not default, but available in dropdown)
+    lists.getCell(`A${listIdx}`).value = "All Warehouses";
+    const warehouseListEndRow = listIdx;
+    // Make lists sheet very hidden so users don't accidentally edit it, but dropdown still works
+    lists.state = "veryHidden";
+
+    const lastDataRow = 1000;
+
+    // Unit validation: piece,carton
+    // Use direct list formula
+    try {
+      (ws as unknown as { dataValidations: { add: (ref: string, v: unknown) => void } }).dataValidations.add(
+        `E2:E${lastDataRow}`,
+        {
+          type: "list",
+          allowBlank: true,
+          formulae: ['"piece,carton"'],
+          showErrorMessage: true,
+          errorTitle: "Invalid unit",
+          error: 'Please select "piece" or "carton" from the dropdown.',
+          showDropDown: false,
+        },
+      );
+    } catch {
+      // ExcelJS version may not support dataValidations — ignore
+    }
+
+    // Warehouse validation: reference hidden list
+    try {
+      (ws as unknown as { dataValidations: { add: (ref: string, v: unknown) => void } }).dataValidations.add(
+        `G2:G${lastDataRow}`,
+        {
+          type: "list",
+          allowBlank: true,
+          formulae: [`Lists!$A$1:$A$${warehouseListEndRow}`],
+          showErrorMessage: true,
+          errorTitle: "Invalid warehouse",
+          error: "Pick a warehouse from the dropdown or choose All Warehouses.",
+          showDropDown: false,
+        },
+      );
+    } catch {
+      // ignore if not supported
+    }
+
+    // Add an Instructions sheet
+    const instr = wb.addWorksheet("Instructions");
+    instr.columns = [
+      { header: "Instructions", key: "k", width: 24 },
+      { header: "Details", key: "v", width: 60 },
+    ];
+    instr.getRow(1).font = { bold: true, color: { argb: "FFFFFFFF" } };
+    instr.getRow(1).fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: "FF0E6B5C" },
+    };
+    instr.addRow({ k: "SKU", v: "Required, unique. 1-60 characters. Example: BTL-750" });
+    instr.addRow({ k: "Product Name", v: "Optional, max 120 characters." });
+    instr.addRow({ k: "Image URL", v: "Optional, must start with http:// or https://" });
+    instr.addRow({ k: "Opening Stock", v: "Required, whole number 0 or more. Applied in the chosen warehouse entry." });
+    instr.addRow({ k: "Unit", v: "Required. Choose piece or carton from dropdown." });
+    instr.addRow({ k: "Carton Contains", v: "Required, whole number >=1. Pieces per carton." });
+    instr.addRow({
+      k: "Warehouse",
+      v: "Required if opening stock >0. Select a warehouse name from dropdown or choose All Warehouses to create stock in every warehouse.",
+    });
+    instr.addRow({ k: "All Warehouses", v: "When selected, the product's opening stock is replicated to every warehouse that exists. It will appear in inventory under each warehouse." });
+    instr.addRow({ k: "File format", v: "Save as .xlsx or .csv. Both are accepted on upload." });
+
+    const buffer = await wb.xlsx.writeBuffer();
+    return new Response(buffer as unknown as ArrayBuffer, {
       headers: {
-        "content-type": "text/csv; charset=utf-8",
-        "content-disposition": 'attachment; filename="star-stock-bulk-template.csv"',
+        "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "content-disposition": 'attachment; filename="star-stock-bulk-template.xlsx"',
       },
     });
   } catch (e) {
@@ -80,6 +241,7 @@ const HEADER_ALIASES: Record<string, string> = {
   cartonsize: "carton",
   warehouse: "warehouse",
   warehousename: "warehouse",
+  openingstockwarehouse: "warehouse",
 };
 
 function parseUnitLoose(raw: string): StockUnit | null {
@@ -157,7 +319,7 @@ export async function POST(req: Request) {
       stockUnit: StockUnit;
       cartonContains: number;
       openingQty: number;
-      warehouseId: number;
+      warehouseId: number | "ALL";
     }> = [];
 
     const cell = (row: string[], key: string) => {
@@ -200,12 +362,16 @@ export async function POST(req: Request) {
         rowErrors.push("Image URL must start with http:// or https://");
       }
 
-      let warehouseId = defaultWarehouse.id;
+      let warehouseId: number | "ALL" = defaultWarehouse.id;
       const whName = cell(row, "warehouse");
       if (whName) {
-        const wh = warehouseByName.get(whName.toLowerCase());
-        if (!wh) rowErrors.push(`Unknown warehouse "${whName}".`);
-        else warehouseId = wh.id;
+        if (isAllWarehouses(whName)) {
+          warehouseId = "ALL";
+        } else {
+          const wh = warehouseByName.get(whName.toLowerCase());
+          if (!wh) rowErrors.push(`Unknown warehouse "${whName}". Use a name from the dropdown or "All Warehouses".`);
+          else warehouseId = wh.id;
+        }
       }
 
       if (rowErrors.length > 0) {

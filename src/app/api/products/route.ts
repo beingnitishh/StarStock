@@ -56,27 +56,37 @@ export async function POST(req: Request) {
       throw new HttpError(409, `A product with SKU "${sku}" already exists.`);
     }
 
-    let warehouseId = body.warehouseId ? Number(body.warehouseId) : 0;
-    if (openingQty > 0) {
-      if (!Number.isInteger(warehouseId) || warehouseId <= 0) {
-        throw new HttpError(400, "Select the warehouse where the opening stock is stored.");
+    // Opening stock warehouse is required — no default. Supports single
+    // warehouse id or the sentinel "ALL" for all warehouses.
+    const rawWarehouse = body.warehouseId ?? body.warehouse ?? body.openingStockWarehouse;
+    let warehouseId: number | "ALL" | null = null;
+    if (typeof rawWarehouse === "string" && rawWarehouse.trim().toLowerCase() === "all") {
+      warehouseId = "ALL";
+    } else if (typeof rawWarehouse === "string" && ["all warehouses", "all warehouse"].includes(rawWarehouse.trim().toLowerCase())) {
+      warehouseId = "ALL";
+    } else if (rawWarehouse === "ALL") {
+      warehouseId = "ALL";
+    } else if (rawWarehouse !== undefined && rawWarehouse !== null && String(rawWarehouse).trim() !== "") {
+      const n = Number(rawWarehouse);
+      if (Number.isInteger(n) && n > 0) warehouseId = n;
+    }
+
+    if (warehouseId === null) {
+      throw new HttpError(400, "Select the warehouse where the opening stock is stored.");
+    }
+
+    if (warehouseId === "ALL") {
+      const all = await db.select({ id: warehouses.id }).from(warehouses).limit(1);
+      if (all.length === 0) {
+        throw new HttpError(400, "Create a warehouse before listing products.");
       }
+    } else {
       const wh = await db
         .select({ id: warehouses.id })
         .from(warehouses)
         .where(eq(warehouses.id, warehouseId))
         .limit(1);
       if (wh.length === 0) throw new HttpError(400, "Selected warehouse does not exist.");
-    } else {
-      const [first] = await db
-        .select({ id: warehouses.id })
-        .from(warehouses)
-        .orderBy(asc(warehouses.id))
-        .limit(1);
-      warehouseId = first?.id ?? 0;
-    }
-    if (!warehouseId) {
-      throw new HttpError(400, "Create a warehouse before listing products.");
     }
 
     const created = await registerProduct(

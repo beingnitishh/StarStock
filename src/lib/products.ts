@@ -1,6 +1,10 @@
 import { db } from "@/db";
-import { products, transactions, warehouseStock } from "@/db/schema";
+import { products, transactions, warehouseStock, warehouses } from "@/db/schema";
+import { HttpError } from "./api";
 import { toPieces, type StockUnit } from "./units";
+
+export const ALL_WAREHOUSES = "ALL" as const;
+export type WarehouseId = number | typeof ALL_WAREHOUSES;
 
 export type RegisterInput = {
   sku: string;
@@ -9,12 +13,44 @@ export type RegisterInput = {
   stockUnit: StockUnit;
   cartonContains: number;
   openingQty: number;
-  warehouseId: number;
+  warehouseId: WarehouseId;
 };
+
+export function isAllWarehouses(value: unknown): boolean {
+  if (value === ALL_WAREHOUSES) return true;
+  if (typeof value !== "string") return false;
+  const v = value.trim().toLowerCase();
+  return (
+    v === "all" ||
+    v === "all warehouses" ||
+    v === "all warehouse" ||
+    v === "all_warehouses" ||
+    v === "all-warehouses" ||
+    v === "all_warehouse" ||
+    v === "all-warehouse"
+  );
+}
+
+export function normalizeWarehouseId(value: unknown): WarehouseId | null {
+  if (value === null || value === undefined || value === "") return null;
+  if (isAllWarehouses(value)) return ALL_WAREHOUSES;
+  const n = Number(value);
+  if (Number.isInteger(n) && n > 0) return n;
+  // Allow string numeric like "3"
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    const parsed = Number(value.trim());
+    if (parsed > 0) return parsed;
+  }
+  return null;
+}
 
 /**
  * Creates a product, applies its opening stock to a warehouse and records the
  * opening stock as the first inbound transaction.
+ * When warehouseId is "ALL", the opening stock is replicated to every
+ * warehouse that exists at creation time. The product will then appear in the
+ * inventory panel under each warehouse, and the aggregate total is the sum
+ * across all warehouses.
  */
 export async function registerProduct(input: RegisterInput, userId: number) {
   return db.transaction(async (tx) => {
@@ -23,6 +59,25 @@ export async function registerProduct(input: RegisterInput, userId: number) {
       input.stockUnit,
       input.cartonContains,
     );
+
+    // Resolve ALL warehouses case
+    const isAll = input.warehouseId === ALL_WAREHOUSES;
+
+    let allWarehouseIds: number[] | null = null;
+    if (isAll) {
+      const whRows = await tx
+        .select({ id: warehouses.id })
+        .from(warehouses);
+      if (whRows.length === 0) {
+        throw new HttpError(400, "Create a warehouse before listing products.");
+      }
+      allWarehouseIds = whRows.map((w) => w.id);
+    }
+
+    const totalOpeningPieces = isAll
+      ? openingPieces * (allWarehouseIds?.length ?? 0)
+      : openingPieces;
+
     const [p] = await tx
       .insert(products)
       .values({
@@ -31,28 +86,72 @@ export async function registerProduct(input: RegisterInput, userId: number) {
         imageUrl: input.imageUrl,
         stockUnit: input.stockUnit,
         cartonContains: input.cartonContains,
-        openingStockPieces: openingPieces,
+        openingStockPieces: totalOpeningPieces,
         createdBy: userId,
       })
       .returning();
-    if (openingPieces > 0) {
-      await tx.insert(warehouseStock).values({
-        productId: p.id,
-        warehouseId: input.warehouseId,
-        qtyPieces: openingPieces,
-        updatedAt: new Date(),
-      });
-      await tx.insert(transactions).values({
-        type: "inbound",
-        productId: p.id,
-        userId,
-        enteredQty: input.openingQty,
-        enteredUnit: input.stockUnit,
-        qtyPieces: openingPieces,
-        warehouseId: input.warehouseId,
-        reason: "Opening stock",
-        resultingTotalPieces: openingPieces,
-      });
+
+    if (isAll && allWarehouseIds) {
+      if (openingPieces > 0) {
+        // Replicate opening stock to every warehouse, creating one inbound
+        // transaction per warehouse so history is traceable per warehouse.
+        for (let i = 0; i < allWarehouseIds.length; i++) {
+          const whId = allWarehouseIds[i];
+          await tx.insert(warehouseStock).values({
+            productId: p.id,
+            warehouseId: whId,
+            qtyPieces: openingPieces,
+            updatedAt: new Date(),
+          });
+          // Incremental total so transactions reflect the growing aggregate.
+          const resultingTotalPieces = openingPieces * (i + 1);
+          await tx.insert(transactions).values({
+            type: "inbound",
+            productId: p.id,
+            userId,
+            enteredQty: input.openingQty,
+            enteredUnit: input.stockUnit,
+            qtyPieces: openingPieces,
+            warehouseId: whId,
+            reason: "Opening stock",
+            resultingTotalPieces,
+          });
+        }
+      } else {
+        // Opening qty is 0 but user explicitly chose All Warehouses: create
+        // zero-quantity rows so the product is visibly listed in every
+        // warehouse on the inventory panel (stock by warehouse).
+        for (const whId of allWarehouseIds) {
+          await tx.insert(warehouseStock).values({
+            productId: p.id,
+            warehouseId: whId,
+            qtyPieces: 0,
+            updatedAt: new Date(),
+          });
+        }
+      }
+    } else {
+      // Single warehouse
+      if (openingPieces > 0) {
+        const singleId = input.warehouseId as number;
+        await tx.insert(warehouseStock).values({
+          productId: p.id,
+          warehouseId: singleId,
+          qtyPieces: openingPieces,
+          updatedAt: new Date(),
+        });
+        await tx.insert(transactions).values({
+          type: "inbound",
+          productId: p.id,
+          userId,
+          enteredQty: input.openingQty,
+          enteredUnit: input.stockUnit,
+          qtyPieces: openingPieces,
+          warehouseId: singleId,
+          reason: "Opening stock",
+          resultingTotalPieces: openingPieces,
+        });
+      }
     }
     return p;
   });

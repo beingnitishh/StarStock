@@ -54,11 +54,22 @@ export function BulkUploadModal({
 
   async function downloadTemplate() {
     const res = await fetch("/api/products/bulk");
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      toast.push("error", "Could not download template", data.error as string | undefined);
+      return;
+    }
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "star-stock-bulk-template.csv";
+    // Try to use filename from content-disposition header
+    const cd = res.headers.get("content-disposition") || "";
+    const match = cd.match(/filename="?([^"]+)"?/);
+    a.download = match?.[1] ?? "star-stock-bulk-template.xlsx";
+    // Fallback to content-type check
+    const ct = res.headers.get("content-type") || "";
+    if (!match && ct.includes("text/csv")) a.download = "star-stock-bulk-template.csv";
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -82,6 +93,9 @@ export function BulkUploadModal({
         );
         onDone();
       }
+      if (data.failed > 0 && data.created === 0) setBusy(false);
+      if (data.created > 0 && data.failed === 0) setBusy(false);
+      if (data.created === 0 && data.failed === 0) setBusy(false);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Upload failed.");
       setBusy(false);
@@ -93,7 +107,7 @@ export function BulkUploadModal({
       open={open}
       onClose={close}
       title="Bulk listing"
-      subtitle="Upload a CSV or XLSX file with SKU, image link, opening stock, unit and carton size."
+      subtitle="Upload a CSV or XLSX file with SKU, image link, opening stock, unit, carton size and warehouse. Use the Excel template for dropdowns."
       width="max-w-xl"
     >
       <div className="space-y-4">
@@ -102,8 +116,12 @@ export function BulkUploadModal({
           className="inline-flex items-center gap-1.5 text-xs font-bold text-brand hover:underline"
         >
           <Icon name="download" className="h-3.5 w-3.5" />
-          Download CSV template
+          Download Excel template
         </button>
+        <p className="text-[11px] leading-relaxed text-ink-faint">
+          The <span className="font-semibold">Warehouse</span> column has a dropdown of your warehouses plus{" "}
+          <span className="font-semibold text-brand">All Warehouses</span>. Choose a single warehouse or All Warehouses to list the product in every warehouse at once.
+        </p>
 
         {!result ? (
           <>

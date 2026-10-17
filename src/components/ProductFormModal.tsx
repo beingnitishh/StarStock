@@ -51,7 +51,8 @@ export function ProductFormModal({
     setStockUnit(editing?.stockUnit ?? "piece");
     setCartonContains(String(editing?.cartonContains ?? 1));
     setOpeningQty("0");
-    setWarehouseId(editing ? "" : (warehouses[0]?.id ? String(warehouses[0].id) : ""));
+    // No default — user must explicitly choose a warehouse (or All Warehouses)
+    setWarehouseId("");
     setError(null);
     setBusy(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -96,6 +97,9 @@ export function ProductFormModal({
         if (!res.ok) throw new Error(data.error ?? "Update failed.");
         toast.push("success", "Product updated", `${sku} saved.`);
       } else {
+        if (!warehouseId) {
+          throw new Error("Select the warehouse where the opening stock is stored.");
+        }
         const res = await fetch("/api/products", {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -106,7 +110,7 @@ export function ProductFormModal({
             stockUnit,
             cartonContains: Number(cartonContains),
             openingQty: Number(openingQty || 0),
-            warehouseId: warehouseId ? Number(warehouseId) : null,
+            warehouseId: warehouseId === "ALL" ? "ALL" : Number(warehouseId),
           }),
         });
         const data = await res.json();
@@ -211,14 +215,23 @@ export function ProductFormModal({
                 className="font-mono"
               />
             </Field>
-            <Field label="Opening stock warehouse" required>
+            <Field label="Opening stock warehouse" required hint={warehouseId === "ALL" ? "all warehouses" : undefined}>
               <Select value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)}>
+                <option value="" disabled>
+                  Select warehouse
+                </option>
                 {warehouses.map((w) => (
                   <option key={w.id} value={w.id}>
                     {w.name}
                   </option>
                 ))}
+                {warehouses.length > 0 ? <option value="ALL">All Warehouses</option> : null}
               </Select>
+              {warehouseId === "ALL" ? (
+                <p className="mt-1 text-[11px] font-medium text-brand">
+                  Will create stock in all {warehouses.length} warehouse{warehouses.length === 1 ? "" : "s"}.
+                </p>
+              ) : null}
             </Field>
           </div>
         ) : null}
