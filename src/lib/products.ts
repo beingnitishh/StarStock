@@ -132,9 +132,12 @@ export async function registerProduct(input: RegisterInput, userId: number) {
         }
       }
     } else {
-      // Single warehouse
+      // Single warehouse — create the stock row even for zero opening so the
+      // product is visibly listed only in the chosen warehouse (with 0 on
+      // hand). Bulk uploads rely on this to avoid the product appearing as
+      // “listed in every warehouse”.
+      const singleId = input.warehouseId as number;
       if (openingPieces > 0) {
-        const singleId = input.warehouseId as number;
         await tx.insert(warehouseStock).values({
           productId: p.id,
           warehouseId: singleId,
@@ -151,6 +154,13 @@ export async function registerProduct(input: RegisterInput, userId: number) {
           warehouseId: singleId,
           reason: "Opening stock",
           resultingTotalPieces: openingPieces,
+        });
+      } else {
+        await tx.insert(warehouseStock).values({
+          productId: p.id,
+          warehouseId: singleId,
+          qtyPieces: 0,
+          updatedAt: new Date(),
         });
       }
     }

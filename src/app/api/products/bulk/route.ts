@@ -362,32 +362,45 @@ export async function POST(req: Request) {
         rowErrors.push("Image URL must start with http:// or https://");
       }
 
-      let warehouseId: number | "ALL" = defaultWarehouse.id;
+      let warehouseId: number | "ALL" | null = null;
       const whName = cell(row, "warehouse");
-      if (whName) {
-        if (isAllWarehouses(whName)) {
-          warehouseId = "ALL";
+      if (!whName) {
+        // Warehouse is required — without it a product would otherwise be
+        // assigned to an arbitrary default and appear “listed in every
+        // warehouse” when the detail view was buggy. Require an explicit
+        // choice unless opening stock is 0 (keep backward compat for zero-
+        // stock rows that previously fell back to the default).
+        if (openingQty > 0) {
+          rowErrors.push(`Warehouse is required. Pick a warehouse from the dropdown or choose "All Warehouses".`);
         } else {
-          const wh = warehouseByName.get(whName.toLowerCase());
-          if (!wh) rowErrors.push(`Unknown warehouse "${whName}". Use a name from the dropdown or "All Warehouses".`);
-          else warehouseId = wh.id;
+          warehouseId = defaultWarehouse.id;
         }
+      } else if (isAllWarehouses(whName)) {
+        warehouseId = "ALL";
+      } else {
+        const wh = warehouseByName.get(whName.toLowerCase());
+        if (!wh) rowErrors.push(`Unknown warehouse "${whName}". Use a name from the dropdown or "All Warehouses".`);
+        else warehouseId = wh.id;
       }
 
       if (rowErrors.length > 0) {
         errors.push({ row: rowNo, sku, message: rowErrors.join(" ") });
       } else {
-        seenInFile.add(sku.toLowerCase());
-        valid.push({
-          row: rowNo,
-          sku,
-          name: cell(row, "name").slice(0, 120),
-          imageUrl: imageUrl.slice(0, 2000),
-          stockUnit: stockUnit as StockUnit,
-          cartonContains,
-          openingQty,
-          warehouseId,
-        });
+        if (warehouseId === null) {
+          errors.push({ row: rowNo, sku, message: "Warehouse is required." });
+        } else {
+          seenInFile.add(sku.toLowerCase());
+          valid.push({
+            row: rowNo,
+            sku,
+            name: cell(row, "name").slice(0, 120),
+            imageUrl: imageUrl.slice(0, 2000),
+            stockUnit: stockUnit as StockUnit,
+            cartonContains,
+            openingQty,
+            warehouseId,
+          });
+        }
       }
     }
 
