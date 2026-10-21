@@ -1,7 +1,7 @@
-import { asc } from "drizzle-orm";
+import { asc, desc } from "drizzle-orm";
 import ExcelJS from "exceljs";
 import { db } from "@/db";
-import { products, warehouses } from "@/db/schema";
+import { bulkUploads, products, warehouses } from "@/db/schema";
 import { errResponse, HttpError, readJson, requireUser, requireWriter } from "@/lib/api";
 import { parseCsv } from "@/lib/csv";
 import { deleteProducts, isAllWarehouses, registerProduct } from "@/lib/products";
@@ -10,11 +10,28 @@ import type { StockUnit } from "@/lib/units";
 export const dynamic = "force-dynamic";
 
 // ---------------------------------------------------------------------------
-// Template download (XLSX with dropdowns)
+// Template download (XLSX with dropdowns)  OR  History fetch (?history=1)
 // ---------------------------------------------------------------------------
-export async function GET() {
+export async function GET(req: Request) {
   try {
-    await requireUser();
+    const user = await requireUser();
+    const url = new URL(req.url);
+    const history = url.searchParams.get("history");
+    if (history) {
+      // Return recent bulk upload history from Supabase
+      try {
+        const rows = await db
+          .select()
+          .from(bulkUploads)
+          .orderBy(desc(bulkUploads.createdAt))
+          .limit(20);
+        return Response.json({ history: rows });
+      } catch {
+        // Table may not exist yet locally — return empty
+        return Response.json({ history: [] });
+      }
+    }
+
     const warehouseRows = await db
       .select()
       .from(warehouses)
@@ -251,6 +268,30 @@ function parseUnitLoose(raw: string): StockUnit | null {
   return null;
 }
 
+function friendlyDbError(e: unknown): string | null {
+  const msg = e instanceof Error ? e.message : String(e);
+  if (msg.includes("products_sku_unique") || msg.includes("duplicate key") || msg.includes("already exists")) {
+    // Extract SKU if possible
+    if (msg.includes("products_sku_unique")) return "SKU already exists (duplicate).";
+    return msg;
+  }
+  if (msg.includes("warehouse_stock")) return "Stock record conflict — try again.";
+  if (msg.includes("connect") || msg.includes("timeout") || msg.includes("pool")) return "Database busy — please retry. Supabase pool overloaded.";
+  return null;
+}
+
+function summarizeErrors(errors: Array<{ row: number; sku: string; message: string }>) {
+  const byMsg = new Map<string, number>();
+  for (const er of errors) {
+    // Use first sentence / core message as bucket
+    const key = er.message.split(" . ")[0].split(" Use ")[0].trim().slice(0, 120);
+    byMsg.set(key, (byMsg.get(key) ?? 0) + 1);
+  }
+  return Array.from(byMsg.entries())
+    .map(([message, count]) => ({ message, count }))
+    .sort((a, b) => b.count - a.count);
+}
+
 export async function POST(req: Request) {
   try {
     const user = await requireWriter();
@@ -260,6 +301,7 @@ export async function POST(req: Request) {
       throw new HttpError(400, "Attach a CSV or XLSX file to upload.");
     }
     const lower = file.name.toLowerCase();
+    const originalFilename = file.name;
 
     let grid: string[][] = [];
     if (lower.endsWith(".csv")) {
@@ -283,6 +325,11 @@ export async function POST(req: Request) {
 
     if (grid.length < 2) {
       throw new HttpError(400, "The file has no data rows. Use the template to add products.");
+    }
+
+    // Guard against huge files — Vercel limit + Supabase pool
+    if (grid.length - 1 > 2000) {
+      throw new HttpError(400, `File has ${grid.length - 1} data rows. Max 2000 rows per upload — split into smaller files.`);
     }
 
     const [defaultWh, allWarehouses, existingProducts] = await Promise.all([
@@ -329,6 +376,8 @@ export async function POST(req: Request) {
 
     for (let r = 1; r < grid.length; r++) {
       const row = grid[r];
+      // Skip fully empty rows (trailing blanks in Excel)
+      if (row.every((c) => !c || c.trim() === "")) continue;
       const rowNo = r + 1;
       const sku = cell(row, "sku");
       const rowErrors: string[] = [];
@@ -362,61 +411,121 @@ export async function POST(req: Request) {
         rowErrors.push("Image URL must start with http:// or https://");
       }
 
-      let warehouseId: number | "ALL" = defaultWarehouse.id;
+      let warehouseId: number | "ALL" | null = null;
       const whName = cell(row, "warehouse");
-      if (whName) {
-        if (isAllWarehouses(whName)) {
-          warehouseId = "ALL";
+      if (!whName) {
+        // Warehouse is required — without it a product would otherwise be
+        // assigned to an arbitrary default and appear “listed in every
+        // warehouse” when the detail view was buggy. Require an explicit
+        // choice unless opening stock is 0 (keep backward compat for zero-
+        // stock rows that previously fell back to the default).
+        if (Number.isFinite(openingQty) && openingQty > 0) {
+          rowErrors.push(`Warehouse is required. Pick a warehouse from the dropdown or choose "All Warehouses".`);
         } else {
-          const wh = warehouseByName.get(whName.toLowerCase());
-          if (!wh) rowErrors.push(`Unknown warehouse "${whName}". Use a name from the dropdown or "All Warehouses".`);
-          else warehouseId = wh.id;
+          warehouseId = defaultWarehouse.id;
         }
+      } else if (isAllWarehouses(whName)) {
+        warehouseId = "ALL";
+      } else {
+        const wh = warehouseByName.get(whName.toLowerCase());
+        if (!wh) rowErrors.push(`Unknown warehouse "${whName}". Use a name from the dropdown or "All Warehouses".`);
+        else warehouseId = wh.id;
       }
 
       if (rowErrors.length > 0) {
         errors.push({ row: rowNo, sku, message: rowErrors.join(" ") });
       } else {
-        seenInFile.add(sku.toLowerCase());
-        valid.push({
-          row: rowNo,
-          sku,
-          name: cell(row, "name").slice(0, 120),
-          imageUrl: imageUrl.slice(0, 2000),
-          stockUnit: stockUnit as StockUnit,
-          cartonContains,
-          openingQty,
-          warehouseId,
-        });
+        if (warehouseId === null) {
+          errors.push({ row: rowNo, sku, message: "Warehouse is required." });
+        } else {
+          seenInFile.add(sku.toLowerCase());
+          valid.push({
+            row: rowNo,
+            sku,
+            name: cell(row, "name").slice(0, 120),
+            imageUrl: imageUrl.slice(0, 2000),
+            stockUnit: stockUnit as StockUnit,
+            cartonContains,
+            openingQty,
+            warehouseId,
+          });
+        }
       }
     }
 
+    // Process valid rows with controlled concurrency to handle 600+ rows
+    // without hitting Supabase pool limits or Vercel timeout.
+    // Each registerProduct is a transaction with 2-3 inserts.
     let created = 0;
-    for (const v of valid) {
-      try {
-        await registerProduct(
-          {
+    const CONCURRENCY = 10;
+    for (let i = 0; i < valid.length; i += CONCURRENCY) {
+      const chunk = valid.slice(i, i + CONCURRENCY);
+      const results = await Promise.allSettled(
+        chunk.map((v) =>
+          registerProduct(
+            {
+              sku: v.sku,
+              name: v.name,
+              imageUrl: v.imageUrl,
+              stockUnit: v.stockUnit,
+              cartonContains: v.cartonContains,
+              openingQty: v.openingQty,
+              warehouseId: v.warehouseId,
+            },
+            user.id,
+          ),
+        ),
+      );
+      results.forEach((res, idx) => {
+        const v = chunk[idx];
+        if (res.status === "fulfilled") {
+          created++;
+        } else {
+          const raw = res.reason instanceof Error ? res.reason.message : String(res.reason);
+          const friendly = friendlyDbError(res.reason) ?? raw;
+          errors.push({
+            row: v.row,
             sku: v.sku,
-            name: v.name,
-            imageUrl: v.imageUrl,
-            stockUnit: v.stockUnit,
-            cartonContains: v.cartonContains,
-            openingQty: v.openingQty,
-            warehouseId: v.warehouseId,
-          },
-          user.id,
-        );
-        created++;
-      } catch (e) {
-        errors.push({
-          row: v.row,
-          sku: v.sku,
-          message: e instanceof Error ? e.message : "Failed to create product.",
-        });
-      }
+            message: friendly.slice(0, 300),
+          });
+        }
+      });
     }
 
-    return Response.json({ created, failed: errors.length, errors });
+    const totalRows = grid.length - 1;
+    const failed = errors.length;
+    const summary = summarizeErrors(errors);
+
+    // Persist to Supabase for audit/history — non-fatal if it fails
+    let historyId: number | null = null;
+    try {
+      const inserted = await db
+        .insert(bulkUploads)
+        .values({
+          createdBy: user.id,
+          filename: originalFilename.slice(0, 255),
+          totalRows,
+          createdCount: created,
+          failedCount: failed,
+          errors: errors.slice(0, 500) as unknown as object, // cap to avoid huge payload
+          summary: { byReason: summary, totalRows, warehouses: allWarehouses.map((w) => w.name) } as unknown as object,
+        })
+        .returning({ id: bulkUploads.id });
+      historyId = inserted[0]?.id ?? null;
+    } catch (e) {
+      console.error("[bulk] failed to log to Supabase bulk_uploads", e);
+    }
+
+    return Response.json({
+      created,
+      failed,
+      errors: errors.slice(0, 200), // cap response for Vercel (rest in Supabase)
+      hasMoreErrors: errors.length > 200,
+      totalErrors: errors.length,
+      summary,
+      historyId,
+      totalRows,
+    });
   } catch (e) {
     return errResponse(e);
   }

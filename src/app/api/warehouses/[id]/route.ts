@@ -29,8 +29,11 @@ export async function GET(_req: Request, ctx: Ctx) {
 
     const warehouse = await getWarehouseOr404(id);
 
-    // All products, with stock rows for this warehouse joined so we can also
-    // surface products that have never had stock here as qty 0.
+    // Only products that have a warehouse_stock row for this warehouse are
+    // considered "listed" in it. This fixes the bulk-upload bug where a
+    // product assigned to a single chosen warehouse was appearing in every
+    // warehouse's detail page because the old logic mapped ALL products to
+    // 0 qty when no stock row existed.
     const prods = await db.select().from(products).orderBy(asc(products.id));
     const stockRows = await db
       .select({
@@ -46,13 +49,18 @@ export async function GET(_req: Request, ctx: Ctx) {
       stockMap.set(s.productId, { qtyPieces: s.qtyPieces, updatedAt: s.updatedAt });
     }
 
-    const items = prods
-      .map((p) => {
-        const s = stockMap.get(p.id) ?? { qtyPieces: 0, updatedAt: null };
+    // Keep only products that are actually stocked/listed in this warehouse.
+    // This includes 0-qty rows created for single-warehouse or ALL zero-
+    // opening products, so they remain visibly listed in their chosen
+    // warehouse(s) without leaking into every warehouse.
+    const prodById = new Map(prods.map((p) => [p.id, p] as const));
+    const items = stockRows
+      .map((s) => {
+        const p = prodById.get(s.productId);
+        if (!p) return null;
         return {
           product: {
             ...p,
-            // Pad stock shape so ProductThumb etc. can work off the existing type.
             totalPieces: s.qtyPieces,
             stocks: [
               {
@@ -67,7 +75,7 @@ export async function GET(_req: Request, ctx: Ctx) {
           updatedAt: s.updatedAt ? s.updatedAt.toISOString() : null,
         };
       })
-      // Show products that actually hold stock first, then empty ones, sorted by SKU.
+      .filter((x): x is NonNullable<typeof x> => x !== null)
       .sort((a, b) => {
         if ((a.qtyPieces > 0) !== (b.qtyPieces > 0)) return a.qtyPieces > 0 ? -1 : 1;
         return skuCompare(a.product.sku, b.product.sku);
