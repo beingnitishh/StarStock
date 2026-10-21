@@ -85,7 +85,7 @@ export function StockOpModal({
     if (productsProp) setProducts(productsProp);
     if (warehousesProp) setWarehouses(warehousesProp);
     if (!productsProp) {
-      fetch("/api/products")
+      fetch("/api/products", { cache: "no-store" })
         .then((r) => r.json())
         .then((d) => setProducts(d.products ?? []))
         .catch(() => {});

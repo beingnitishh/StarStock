@@ -58,7 +58,7 @@ export default function InventoryPage() {
     try {
       setLoadError(null);
       const [pRes, wRes] = await Promise.all([
-        fetch("/api/products"),
+        fetch("/api/products", { cache: "no-store" }),
         fetch("/api/warehouses"),
       ]);
       const [pData, wData] = await Promise.all([pRes.json(), wRes.json()]);

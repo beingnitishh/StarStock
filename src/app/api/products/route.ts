@@ -10,6 +10,8 @@ import {
   requireUser,
   requireWriter,
 } from "@/lib/api";
+import { checkImageUrl } from "@/lib/images";
+import { applyProductImage } from "@/lib/product-images";
 import { fetchProductRows } from "@/lib/query";
 import { registerProduct } from "@/lib/products";
 
@@ -32,7 +34,10 @@ export async function POST(req: Request) {
 
     const sku = String(body.sku ?? "").trim();
     const name = String(body.name ?? "").trim().slice(0, 120);
-    const imageUrl = String(body.imageUrl ?? "").trim().slice(0, 60_000);
+    const imageCheck = checkImageUrl(body.imageUrl ?? "");
+    if (!imageCheck.ok) throw new HttpError(400, imageCheck.error);
+    const requestedImage = imageCheck.value;
+    const isUpload = /^data:/i.test(requestedImage);
     const stockUnit = parseUnit(body.stockUnit ?? "piece");
     const cartonContains = Number(body.cartonContains);
     const openingQty = parseNonNegativeInt(body.openingQty ?? 0, "Opening stock");
@@ -43,10 +48,6 @@ export async function POST(req: Request) {
     if (!Number.isInteger(cartonContains) || cartonContains < 1) {
       throw new HttpError(400, "Carton Contains must be a whole number of at least 1.");
     }
-    if (imageUrl && !/^(https?:\/\/|data:image\/)/i.test(imageUrl)) {
-      throw new HttpError(400, "Product image must be an http(s) URL or an uploaded image.");
-    }
-
     const existing = await db
       .select({ id: products.id })
       .from(products)
@@ -90,10 +91,35 @@ export async function POST(req: Request) {
     }
 
     const created = await registerProduct(
-      { sku, name, imageUrl, stockUnit, cartonContains, openingQty, warehouseId },
+      {
+        sku,
+        name,
+        // The photo is attached right after the product row exists (it needs
+        // the id for the served image URL).
+        imageUrl: isUpload ? "" : requestedImage,
+        stockUnit,
+        cartonContains,
+        openingQty,
+        warehouseId,
+      },
       user.id,
     );
-    return Response.json({ productId: created.id }, { status: 201 });
+
+    let imageUrl = isUpload ? "" : requestedImage;
+    let imageWarning: string | null = null;
+    if (isUpload) {
+      try {
+        imageUrl = await applyProductImage(created.id, requestedImage);
+      } catch (e) {
+        // The listing itself was created; report a warning instead of failing
+        // so the user does not retry and hit a duplicate SKU.
+        console.error("[products] could not store uploaded image", e);
+        imageWarning =
+          "The product was listed, but its photo could not be saved. Open the product and upload the image again.";
+      }
+    }
+
+    return Response.json({ productId: created.id, imageUrl, imageWarning }, { status: 201 });
   } catch (e) {
     return errResponse(e);
   }

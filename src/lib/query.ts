@@ -8,6 +8,7 @@ import {
   warehouseStock,
   warehouses,
 } from "@/db/schema";
+import { migrateLegacyProductImages } from "./product-images";
 import { skuCompare, type StockUnit } from "./units";
 
 export type ProductStock = {
@@ -52,7 +53,7 @@ export async function fetchProductRows(): Promise<ProductRow[]> {
     });
     byProduct.set(s.productId, arr);
   }
-  return prods
+  const rows: ProductRow[] = prods
     .map((p) => {
       const stocks = (byProduct.get(p.id) ?? []).sort(
         (a, b) => a.warehouseId - b.warehouseId,
@@ -64,6 +65,13 @@ export async function fetchProductRows(): Promise<ProductRow[]> {
       };
     })
     .sort((a, b) => skuCompare(a.sku, b.sku));
+
+  // Heal products that stored a raw (possibly truncated) data URL in the old
+  // column: the payload moves to `product_images` and `imageUrl` becomes a
+  // lightweight served URL. No-op once there is nothing left to migrate.
+  await migrateLegacyProductImages(rows);
+
+  return rows;
 }
 
 export async function fetchProductRow(id: number): Promise<ProductRow | null> {

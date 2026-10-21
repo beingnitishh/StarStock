@@ -44,7 +44,7 @@ export default function ProductPage() {
   const load = useCallback(async () => {
     try {
       const [pRes, wRes] = await Promise.all([
-        fetch(`/api/products/${id}`),
+        fetch(`/api/products/${id}`, { cache: "no-store" }),
         fetch("/api/warehouses"),
       ]);
       if (pRes.status === 404) {
