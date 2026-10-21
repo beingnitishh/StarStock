@@ -4,6 +4,8 @@ import { db } from "@/db";
 import { bulkUploads, products, warehouses } from "@/db/schema";
 import { errResponse, HttpError, readJson, requireUser, requireWriter } from "@/lib/api";
 import { parseCsv } from "@/lib/csv";
+import { checkImageUrl, isBareImageFileName } from "@/lib/images";
+import { applyProductImage } from "@/lib/product-images";
 import { deleteProducts, isAllWarehouses, registerProduct } from "@/lib/products";
 import type { StockUnit } from "@/lib/units";
 
@@ -184,7 +186,10 @@ export async function GET(req: Request) {
     };
     instr.addRow({ k: "SKU", v: "Required, unique. 1-60 characters. Example: BTL-750" });
     instr.addRow({ k: "Product Name", v: "Optional, max 120 characters." });
-    instr.addRow({ k: "Image URL", v: "Optional, must start with http:// or https://" });
+    instr.addRow({
+      k: "Image URL",
+      v: "Optional. Paste an https:// link, or leave it blank (a file name like BTL-750.jpg is also accepted) and add the photo files from the bulk upload screen — name each file after its SKU.",
+    });
     instr.addRow({ k: "Opening Stock", v: "Required, whole number 0 or more. Applied in the chosen warehouse entry." });
     instr.addRow({ k: "Unit", v: "Required. Choose piece or carton from dropdown." });
     instr.addRow({ k: "Carton Contains", v: "Required, whole number >=1. Pieces per carton." });
@@ -406,9 +411,16 @@ export async function POST(req: Request) {
         rowErrors.push("Opening Stock must be a whole number of 0 or more.");
       }
 
-      const imageUrl = cell(row, "image");
-      if (imageUrl && !/^https?:\/\//i.test(imageUrl)) {
-        rowErrors.push("Image URL must start with http:// or https://");
+      const imageCell = cell(row, "image");
+      const imageCheck = checkImageUrl(imageCell);
+      let imageUrl = imageCheck.ok ? imageCheck.value : "";
+      if (!imageCheck.ok) {
+        // A bare file name (e.g. "BTL-750.jpg") is a hint to attach that photo
+        // from the upload screen — do not reject the whole row for it.
+        if (!isBareImageFileName(imageCell)) {
+          rowErrors.push(`Image URL: ${imageCheck.error}`);
+          imageUrl = "";
+        }
       }
 
       let warehouseId: number | "ALL" | null = null;
@@ -443,7 +455,7 @@ export async function POST(req: Request) {
             row: rowNo,
             sku,
             name: cell(row, "name").slice(0, 120),
-            imageUrl: imageUrl.slice(0, 2000),
+            imageUrl,
             stockUnit: stockUnit as StockUnit,
             cartonContains,
             openingQty,
@@ -457,6 +469,7 @@ export async function POST(req: Request) {
     // without hitting Supabase pool limits or Vercel timeout.
     // Each registerProduct is a transaction with 2-3 inserts.
     let created = 0;
+    const createdItems: Array<{ row: number; sku: string }> = [];
     const CONCURRENCY = 10;
     for (let i = 0; i < valid.length; i += CONCURRENCY) {
       const chunk = valid.slice(i, i + CONCURRENCY);
@@ -466,7 +479,7 @@ export async function POST(req: Request) {
             {
               sku: v.sku,
               name: v.name,
-              imageUrl: v.imageUrl,
+              imageUrl: /^data:/i.test(v.imageUrl) ? "" : v.imageUrl,
               stockUnit: v.stockUnit,
               cartonContains: v.cartonContains,
               openingQty: v.openingQty,
@@ -476,10 +489,21 @@ export async function POST(req: Request) {
           ),
         ),
       );
+      const followUps: Array<Promise<unknown>> = [];
       results.forEach((res, idx) => {
         const v = chunk[idx];
         if (res.status === "fulfilled") {
           created++;
+          createdItems.push({ row: v.row, sku: res.value.sku });
+          if (/^data:/i.test(v.imageUrl)) {
+            // A data URL cannot be stored inline in the listing row safely;
+            // move it into the image table (same path as uploaded photos).
+            followUps.push(
+              applyProductImage(res.value.id, v.imageUrl).catch((e) => {
+                console.error("[bulk] could not store inline image", v.sku, e);
+              }),
+            );
+          }
         } else {
           const raw = res.reason instanceof Error ? res.reason.message : String(res.reason);
           const friendly = friendlyDbError(res.reason) ?? raw;
@@ -490,6 +514,7 @@ export async function POST(req: Request) {
           });
         }
       });
+      if (followUps.length > 0) await Promise.all(followUps);
     }
 
     const totalRows = grid.length - 1;
@@ -518,6 +543,7 @@ export async function POST(req: Request) {
 
     return Response.json({
       created,
+      createdItems: createdItems.slice(0, 2000),
       failed,
       errors: errors.slice(0, 200), // cap response for Vercel (rest in Supabase)
       hasMoreErrors: errors.length > 200,

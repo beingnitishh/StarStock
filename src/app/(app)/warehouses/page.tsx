@@ -31,7 +31,7 @@ export default function WarehousesPage() {
     try {
       const [wRes, pRes] = await Promise.all([
         fetch("/api/warehouses"),
-        fetch("/api/products"),
+        fetch("/api/products", { cache: "no-store" }),
       ]);
       const [wData, pData] = await Promise.all([wRes.json(), pRes.json()]);
       if (!wRes.ok || !pRes.ok) throw new Error(wData.error ?? pData.error ?? "Load failed.");

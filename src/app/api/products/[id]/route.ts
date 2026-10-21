@@ -9,6 +9,8 @@ import {
   requireUser,
   requireWriter,
 } from "@/lib/api";
+import { checkImageUrl } from "@/lib/images";
+import { applyProductImage, isOwnStoredImageUrl } from "@/lib/product-images";
 import { deleteProducts } from "@/lib/products";
 import { fetchProductRow, fetchTransactionRows } from "@/lib/query";
 
@@ -45,16 +47,10 @@ export async function PATCH(req: Request, ctx: Ctx) {
       cartonContains?: number;
       stockUnit?: "piece" | "carton";
     } = {};
+    let imageChanged = false;
 
     if (body.name !== undefined) {
       updates.name = String(body.name).trim().slice(0, 120);
-    }
-    if (body.imageUrl !== undefined) {
-      const url = String(body.imageUrl).trim().slice(0, 60_000);
-      if (url && !/^(https?:\/\/|data:image\/)/i.test(url)) {
-        throw new HttpError(400, "Product image must be an http(s) URL or an uploaded image.");
-      }
-      updates.imageUrl = url;
     }
     if (body.cartonContains !== undefined) {
       const c = Number(body.cartonContains);
@@ -66,17 +62,40 @@ export async function PATCH(req: Request, ctx: Ctx) {
     if (body.stockUnit !== undefined) {
       updates.stockUnit = parseUnit(body.stockUnit);
     }
+
+    if (body.imageUrl !== undefined) {
+      const checked = checkImageUrl(body.imageUrl);
+      if (!checked.ok) throw new HttpError(400, checked.error);
+
+      const currentRows = await db
+        .select({ imageUrl: products.imageUrl })
+        .from(products)
+        .where(eq(products.id, id))
+        .limit(1);
+      if (!currentRows[0]) throw new HttpError(404, "Product not found.");
+
+      const unchanged =
+        checked.value === currentRows[0].imageUrl ||
+        (isOwnStoredImageUrl(id, checked.value) && isOwnStoredImageUrl(id, currentRows[0].imageUrl));
+
+      if (!unchanged) {
+        // Uploaded photos move into the image table; links replace old uploads.
+        updates.imageUrl = await applyProductImage(id, checked.value);
+        imageChanged = true;
+      }
+    }
     if (Object.keys(updates).length === 0) {
-      throw new HttpError(400, "No fields to update.");
+      // Nothing actually changed (e.g. the form re-sent the existing photo).
+      return Response.json({ ok: true, unchanged: true });
     }
 
     const [updated] = await db
       .update(products)
       .set(updates)
       .where(eq(products.id, id))
-      .returning({ id: products.id });
+      .returning({ id: products.id, imageUrl: products.imageUrl });
     if (!updated) throw new HttpError(404, "Product not found.");
-    return Response.json({ ok: true });
+    return Response.json({ ok: true, imageChanged, imageUrl: updated.imageUrl });
   } catch (e) {
     return errResponse(e);
   }

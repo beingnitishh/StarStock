@@ -68,6 +68,24 @@ export const products = pgTable("products", {
     .defaultNow(),
 });
 
+/**
+ * Uploaded product photos live in their own table so a listing request never
+ * has to ship megabytes of base64. `products.imageUrl` points at
+ * `/api/products/<id>/image?v=<timestamp>` for stored photos, or keeps an
+ * external/site-relative link when the product was listed with a URL.
+ */
+export const productImages = pgTable("product_images", {
+  productId: integer("product_id")
+    .primaryKey()
+    .references(() => products.id, { onDelete: "cascade" }),
+  mimeType: text("mime_type").notNull().default("image/jpeg"),
+  /** Base64 payload (no data-URL prefix). */
+  data: text("data").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
 export const warehouseStock = pgTable(
   "warehouse_stock",
   {

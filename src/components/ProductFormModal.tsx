@@ -3,20 +3,9 @@
 import { useEffect, useState, type ChangeEvent } from "react";
 import { Button, Field, Input, Modal, ProductThumb, Select, Spinner, useToast } from "./ui";
 import { Icon } from "./icons";
+import { prepareProductImage } from "@/lib/image-client";
+import { IMAGE_ACCEPT } from "@/lib/images";
 import type { ProductRow, Warehouse } from "@/lib/types";
-
-async function fileToDataUrl(file: File): Promise<string> {
-  const bmp = await createImageBitmap(file);
-  const max = 512;
-  const scale = Math.min(1, max / Math.max(bmp.width, bmp.height));
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(bmp.width * scale));
-  canvas.height = Math.max(1, Math.round(bmp.height * scale));
-  const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("Could not process the image.");
-  ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
-  return canvas.toDataURL("image/jpeg", 0.85);
-}
 
 export function ProductFormModal({
   open,
@@ -41,6 +30,7 @@ export function ProductFormModal({
   const [warehouseId, setWarehouseId] = useState("");
   const [busy, setBusy] = useState(false);
   const [imageBusy, setImageBusy] = useState(false);
+  const [imageTouched, setImageTouched] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -55,6 +45,8 @@ export function ProductFormModal({
     setWarehouseId("");
     setError(null);
     setBusy(false);
+    setImageBusy(false);
+    setImageTouched(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -62,17 +54,16 @@ export function ProductFormModal({
     const file = e.target.files?.[0];
     e.target.value = "";
     if (!file) return;
-    if (!file.type.startsWith("image/")) {
-      setError("Please choose an image file.");
-      return;
-    }
     setImageBusy(true);
     setError(null);
     try {
-      const dataUrl = await fileToDataUrl(file);
-      setImageUrl(dataUrl);
-    } catch {
-      setError("Could not read that image. Try a different file.");
+      // Decodes any format the browser understands (JPG, PNG, WebP, GIF, BMP,
+      // AVIF, ICO, SVG, TIFF…), then downsizes and compresses it for storage.
+      const prepared = await prepareProductImage(file);
+      setImageUrl(prepared.dataUrl);
+      setImageTouched(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not read that image. Try a different file.");
     } finally {
       setImageBusy(false);
     }
@@ -88,7 +79,9 @@ export function ProductFormModal({
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             name,
-            imageUrl,
+            // Only send the photo when it actually changed — re-sending the
+            // existing preview URL would be a pointless round trip.
+            ...(imageTouched ? { imageUrl } : {}),
             stockUnit,
             cartonContains: Number(cartonContains),
           }),
@@ -115,7 +108,11 @@ export function ProductFormModal({
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error ?? "Could not create the product.");
-        toast.push("success", "Product listed", `${sku} added to inventory.`);
+        if (data.imageWarning) {
+          toast.push("info", "Product listed — photo not saved", data.imageWarning as string);
+        } else {
+          toast.push("success", "Product listed", `${sku} added to inventory.`);
+        }
       }
       onDone();
       onClose();
@@ -145,17 +142,28 @@ export function ProductFormModal({
             <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-line-strong bg-card px-3 py-1.5 text-xs font-semibold transition-colors hover:border-brand/50 hover:bg-brand-soft/40">
               {imageBusy ? <Spinner className="h-3.5 w-3.5" /> : <Icon name="upload" className="h-3.5 w-3.5" />}
               Upload image
-              <input type="file" accept="image/*" className="hidden" onChange={onFile} />
+              <input
+                type="file"
+                accept={IMAGE_ACCEPT}
+                className="hidden"
+                onChange={onFile}
+                disabled={imageBusy || busy}
+              />
             </label>
             {imageUrl ? (
               <button
-                onClick={() => setImageUrl("")}
+                onClick={() => {
+                  setImageUrl("");
+                  setImageTouched(true);
+                }}
                 className="block text-[11px] font-semibold text-out hover:underline"
               >
                 Remove image
               </button>
             ) : (
-              <p className="text-[11px] text-ink-faint">JPG/PNG, resized automatically.</p>
+              <p className="max-w-[240px] text-[11px] leading-relaxed text-ink-faint">
+                JPG, PNG, WebP, GIF, BMP, AVIF, SVG or TIFF · resized automatically.
+              </p>
             )}
           </div>
         </div>
@@ -247,7 +255,13 @@ export function ProductFormModal({
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button variant="primary" onClick={submit} loading={busy} icon={editing ? "pencil" : "plus"}>
+          <Button
+            variant="primary"
+            onClick={submit}
+            loading={busy}
+            disabled={imageBusy}
+            icon={editing ? "pencil" : "plus"}
+          >
             {editing ? "Save changes" : "List product"}
           </Button>
         </div>

@@ -317,12 +317,20 @@ export function ProductThumb({
   size?: string;
   rounded?: string;
 }) {
-  if (src) {
+  // Remember which URL failed so a new image gets a fresh attempt without an
+  // extra render cascade.
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const showImage = Boolean(src) && failedSrc !== src;
+
+  if (showImage) {
     return (
       // eslint-disable-next-line @next/next/no-img-element
       <img
         src={src}
         alt={name || "Product image"}
+        loading="lazy"
+        draggable={false}
+        onError={() => setFailedSrc(src)}
         className={`${size} ${rounded} shrink-0 border border-line bg-card object-cover`}
       />
     );
@@ -330,6 +338,7 @@ export function ProductThumb({
   return (
     <div
       className={`${size} ${rounded} flex shrink-0 items-center justify-center border border-line bg-surface text-ink-faint`}
+      title={src && failedSrc === src ? "This image could not be loaded" : "No image"}
     >
       <Icon name="image" className="h-4 w-4" />
     </div>
