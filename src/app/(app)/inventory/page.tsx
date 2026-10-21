@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icons";
 import { BulkUploadModal } from "@/components/BulkUploadModal";
@@ -11,6 +11,7 @@ import {
   Button,
   EmptyState,
   Input,
+  Modal,
   ProductThumb,
   Select,
   StockAmount,
@@ -34,6 +35,10 @@ export default function InventoryPage() {
   const [whFilter, setWhFilter] = useState("");
   const [lowOnly, setLowOnly] = useState(false);
   const [sort, setSort] = useState<SortKey>("sku-asc");
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set());
+  const [deleteSelectedOpen, setDeleteSelectedOpen] = useState(false);
+  const [deletingSelected, setDeletingSelected] = useState(false);
+  const selectAllRef = useRef<HTMLInputElement>(null);
 
   const [opModal, setOpModal] = useState<{ open: boolean; type: OpType; productId?: number }>({
     open: false,
@@ -52,7 +57,13 @@ export default function InventoryPage() {
       ]);
       const [pData, wData] = await Promise.all([pRes.json(), wRes.json()]);
       if (!pRes.ok || !wRes.ok) throw new Error(pData.error ?? wData.error ?? "Failed to load.");
-      setProducts(pData.products ?? []);
+      const nextProducts = (pData.products ?? []) as ProductRow[];
+      setProducts(nextProducts);
+      setSelectedIds((current) => {
+        const existingIds = new Set(nextProducts.map((product) => product.id));
+        const next = new Set([...current].filter((id) => existingIds.has(id)));
+        return next.size === current.size ? current : next;
+      });
       setWarehouses(wData.warehouses ?? []);
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : "Failed to load inventory.");
@@ -96,6 +107,44 @@ export default function InventoryPage() {
     return list;
   }, [products, search, whFilter, lowOnly, sort]);
 
+  const selectedProducts = useMemo(
+    () => products.filter((product) => selectedIds.has(product.id)),
+    [products, selectedIds],
+  );
+  const selectedWithStock = useMemo(
+    () => selectedProducts.filter((product) => product.stocks.some((stock) => stock.qtyPieces > 0)),
+    [selectedProducts],
+  );
+  const visibleSelectedCount = filtered.filter((product) => selectedIds.has(product.id)).length;
+  const allFilteredSelected = filtered.length > 0 && visibleSelectedCount === filtered.length;
+  const partiallyFilteredSelected = visibleSelectedCount > 0 && !allFilteredSelected;
+
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = partiallyFilteredSelected;
+    }
+  }, [partiallyFilteredSelected]);
+
+  function toggleProductSelection(id: number, checked: boolean) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  }
+
+  function toggleFilteredSelection(checked: boolean) {
+    setSelectedIds((current) => {
+      const next = new Set(current);
+      for (const product of filtered) {
+        if (checked) next.add(product.id);
+        else next.delete(product.id);
+      }
+      return next;
+    });
+  }
+
   async function exportExcel() {
     try {
       const res = await fetch("/api/export/stock");
@@ -113,6 +162,46 @@ export default function InventoryPage() {
       toast.push("success", "Export ready", "Current stock downloaded as Excel.");
     } catch (e) {
       toast.push("error", "Export failed", e instanceof Error ? e.message : undefined);
+    }
+  }
+
+  async function deleteSelectedProducts() {
+    if (deletingSelected || selectedProducts.length === 0 || selectedWithStock.length > 0) return;
+
+    const ids = selectedProducts.map((product) => product.id);
+    setDeletingSelected(true);
+    try {
+      const res = await fetch("/api/products/bulk", {
+        method: "DELETE",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ids }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        deleted?: Array<{ id: number; sku: string }>;
+      };
+      if (!res.ok) throw new Error(data.error ?? "Delete failed.");
+
+      const deletedIds = new Set(data.deleted?.map((product) => product.id) ?? ids);
+      setProducts((current) => current.filter((product) => !deletedIds.has(product.id)));
+      setSelectedIds((current) => new Set([...current].filter((id) => !deletedIds.has(id))));
+      setDeleteSelectedOpen(false);
+      const count = data.deleted?.length ?? ids.length;
+      toast.push(
+        "success",
+        "Products deleted",
+        `${fmtInt(count)} selected SKU${count === 1 ? " was" : "s were"} removed from the catalog.`,
+      );
+    } catch (e) {
+      toast.push(
+        "error",
+        "Could not delete selected SKUs",
+        e instanceof Error ? e.message : "Please try again.",
+      );
+      // Refresh stock in case it changed after this selection was made.
+      void load();
+    } finally {
+      setDeletingSelected(false);
     }
   }
 
@@ -198,6 +287,45 @@ export default function InventoryPage() {
         </label>
       </div>
 
+      {canWrite && selectedIds.size > 0 ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-brand/20 bg-brand-soft/40 px-3.5 py-3">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-brand/10 text-brand">
+              <Icon name="check" className="h-4 w-4" />
+            </span>
+            <div>
+              <p className="text-sm font-bold text-ink">
+                {fmtInt(selectedIds.size)} product{selectedIds.size === 1 ? "" : "s"} selected
+              </p>
+              {visibleSelectedCount !== selectedIds.size ? (
+                <p className="text-xs text-ink-faint">
+                  {fmtInt(visibleSelectedCount)} visible with the current filters
+                </p>
+              ) : null}
+            </div>
+          </div>
+          <div className="flex w-full items-center gap-2 sm:w-auto">
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setSelectedIds(new Set())}
+              className="flex-1 sm:flex-none"
+            >
+              Clear selection
+            </Button>
+            <Button
+              size="sm"
+              variant="danger"
+              icon="trash"
+              onClick={() => setDeleteSelectedOpen(true)}
+              className="flex-1 sm:flex-none"
+            >
+              Delete selected
+            </Button>
+          </div>
+        </div>
+      ) : null}
+
       {/* Table */}
       {loading ? (
         <div className="space-y-2">
@@ -238,9 +366,22 @@ export default function InventoryPage() {
         />
       ) : (
         <div className="-mx-4 overflow-x-auto rounded-none border-y border-line bg-card px-4 sm:mx-0 sm:rounded-xl sm:border sm:px-0">
-          <table className="w-full min-w-[780px] text-left sm:min-w-[900px]">
+          <table className="w-full min-w-[820px] text-left sm:min-w-[940px]">
             <thead>
               <tr className="border-b border-line bg-surface text-[10px] font-bold uppercase tracking-[0.12em] text-ink-faint">
+                {canWrite ? (
+                  <th className="w-12 px-4 py-2.5">
+                    <input
+                      ref={selectAllRef}
+                      type="checkbox"
+                      checked={allFilteredSelected}
+                      onChange={(e) => toggleFilteredSelection(e.target.checked)}
+                      aria-label="Select all products matching the current filters"
+                      title="Select all filtered products"
+                      className="h-4 w-4 cursor-pointer rounded accent-[#0e6b5c] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+                    />
+                  </th>
+                ) : null}
                 <th className="px-4 py-2.5">Product</th>
                 <th className="px-4 py-2.5">Carton contains</th>
                 <th className="px-4 py-2.5">Stock by warehouse</th>
@@ -255,8 +396,21 @@ export default function InventoryPage() {
                   <tr
                     key={p.id}
                     onClick={() => router.push(`/products/${p.id}`)}
-                    className="cursor-pointer transition-colors hover:bg-surface/70"
+                    className={`cursor-pointer transition-colors ${
+                      selectedIds.has(p.id) ? "bg-brand-soft/25 hover:bg-brand-soft/40" : "hover:bg-surface/70"
+                    }`}
                   >
+                    {canWrite ? (
+                      <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(p.id)}
+                          onChange={(e) => toggleProductSelection(p.id, e.target.checked)}
+                          aria-label={`Select SKU ${p.sku}`}
+                          className="h-4 w-4 cursor-pointer rounded accent-[#0e6b5c] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand"
+                        />
+                      </td>
+                    ) : null}
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
                         <ProductThumb src={p.imageUrl} name={p.name} />
@@ -366,6 +520,104 @@ export default function InventoryPage() {
             editing={editing}
           />
           <BulkUploadModal open={bulkOpen} onClose={() => setBulkOpen(false)} onDone={load} />
+          <Modal
+            open={deleteSelectedOpen}
+            onClose={() => {
+              if (!deletingSelected) setDeleteSelectedOpen(false);
+            }}
+            title="Delete selected products?"
+            subtitle={`${fmtInt(selectedProducts.length)} selected SKU${selectedProducts.length === 1 ? "" : "s"}`}
+            width="max-w-lg"
+          >
+            <div className="space-y-4">
+              <p className="text-sm leading-relaxed text-ink-soft">
+                This permanently removes the selected products, their stock records, and their
+                movement history. This cannot be undone.
+              </p>
+
+              {selectedProducts.length > 0 ? (
+                <div className="max-h-52 overflow-y-auto rounded-lg border border-line bg-card">
+                  <ul className="divide-y divide-line">
+                    {selectedProducts.map((product) => (
+                      <li
+                        key={product.id}
+                        className="flex items-center justify-between gap-3 px-3 py-2.5"
+                      >
+                        <div className="min-w-0">
+                          <p className="truncate font-mono text-xs font-bold">{product.sku}</p>
+                          <p className="truncate text-[11px] text-ink-faint">
+                            {product.name || "Unnamed product"}
+                          </p>
+                        </div>
+                        <span
+                          className={`shrink-0 font-mono text-xs font-semibold ${
+                            product.totalPieces > 0 ? "text-out" : "text-ink-soft"
+                          }`}
+                        >
+                          {fmtInt(product.totalPieces)} pcs
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : (
+                <p className="rounded-lg bg-surface px-3 py-2.5 text-sm text-ink-faint">
+                  No products are selected. Close this dialog and select at least one SKU.
+                </p>
+              )}
+
+              {selectedWithStock.length > 0 ? (
+                <div className="rounded-lg border border-out/20 bg-out-soft p-3 text-out" role="alert">
+                  <div className="flex items-start gap-2">
+                    <Icon name="alert" className="mt-0.5 h-4 w-4 shrink-0" />
+                    <p className="text-xs font-semibold leading-relaxed">
+                      {fmtInt(selectedWithStock.length)} selected SKU{selectedWithStock.length === 1 ? " still holds" : "s still hold"} stock.
+                      Bring stock to zero or deselect those products before deleting.
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      const stockedIds = new Set(selectedWithStock.map((product) => product.id));
+                      setSelectedIds((current) =>
+                        new Set([...current].filter((id) => !stockedIds.has(id))),
+                      );
+                      if (selectedWithStock.length === selectedProducts.length) {
+                        setDeleteSelectedOpen(false);
+                      }
+                    }}
+                    className="mt-2 text-out hover:bg-out/10 hover:text-out"
+                  >
+                    Deselect stocked SKUs
+                  </Button>
+                </div>
+              ) : selectedProducts.length > 0 ? (
+                <p className="rounded-lg bg-in-soft px-3 py-2.5 text-xs font-semibold text-in">
+                  All selected products currently have zero stock and can be deleted.
+                </p>
+              ) : null}
+
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="ghost"
+                  onClick={() => setDeleteSelectedOpen(false)}
+                  disabled={deletingSelected}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="danger"
+                  icon="trash"
+                  onClick={deleteSelectedProducts}
+                  loading={deletingSelected}
+                  disabled={selectedProducts.length === 0 || selectedWithStock.length > 0}
+                >
+                  Delete {fmtInt(selectedProducts.length)} SKU{selectedProducts.length === 1 ? "" : "s"}
+                </Button>
+              </div>
+            </div>
+          </Modal>
         </>
       ) : null}
     </div>

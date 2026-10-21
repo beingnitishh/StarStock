@@ -1,3 +1,4 @@
+import { asc, inArray } from "drizzle-orm";
 import { db } from "@/db";
 import { products, transactions, warehouseStock, warehouses } from "@/db/schema";
 import { HttpError } from "./api";
@@ -154,5 +155,84 @@ export async function registerProduct(input: RegisterInput, userId: number) {
       }
     }
     return p;
+  });
+}
+
+/**
+ * Deletes a set of products as one atomic action, but only when every selected
+ * SKU has zero stock. Product and stock rows are locked while checking so a
+ * stock movement cannot race the validation and silently remove live stock.
+ */
+export async function deleteProducts(ids: number[]) {
+  const uniqueIds = [...new Set(ids)].sort((a, b) => a - b);
+  if (uniqueIds.length === 0) {
+    throw new HttpError(400, "Select at least one product to delete.");
+  }
+
+  return db.transaction(async (tx) => {
+    const selectedProducts = await tx
+      .select({ id: products.id, sku: products.sku })
+      .from(products)
+      .where(inArray(products.id, uniqueIds))
+      .orderBy(asc(products.id))
+      .for("update");
+
+    if (selectedProducts.length !== uniqueIds.length) {
+      throw new HttpError(
+        404,
+        "One or more selected products could not be found. Refresh inventory and try again.",
+      );
+    }
+
+    const stockRows = await tx
+      .select({ productId: warehouseStock.productId, qtyPieces: warehouseStock.qtyPieces })
+      .from(warehouseStock)
+      .where(inArray(warehouseStock.productId, uniqueIds))
+      .orderBy(asc(warehouseStock.productId), asc(warehouseStock.warehouseId))
+      .for("update");
+
+    const positiveStock = new Map<number, { pieces: number; warehouses: number }>();
+    for (const row of stockRows) {
+      if (row.qtyPieces <= 0) continue;
+      const current = positiveStock.get(row.productId) ?? { pieces: 0, warehouses: 0 };
+      positiveStock.set(row.productId, {
+        pieces: current.pieces + row.qtyPieces,
+        warehouses: current.warehouses + 1,
+      });
+    }
+
+    const blocked = selectedProducts.flatMap((product) => {
+      const stock = positiveStock.get(product.id);
+      return stock ? [{ ...product, ...stock }] : [];
+    });
+
+    if (blocked.length > 0) {
+      if (uniqueIds.length === 1) {
+        const product = blocked[0];
+        throw new HttpError(
+          400,
+          `"${product.sku}" still holds ${product.pieces} pcs across ${product.warehouses} warehouse${
+            product.warehouses === 1 ? "" : "s"
+          }. Record an outbound or adjustment to bring the stock to zero before deleting it.`,
+        );
+      }
+
+      const details = blocked
+        .slice(0, 8)
+        .map((product) => `${product.sku} (${product.pieces} pcs)`)
+        .join(", ");
+      const remaining = blocked.length - Math.min(blocked.length, 8);
+      throw new HttpError(
+        400,
+        `Cannot delete selected products because stock remains for: ${details}${
+          remaining > 0 ? `, and ${remaining} more` : ""
+        }. Bring stock to zero or deselect those SKUs.`,
+      );
+    }
+
+    return tx
+      .delete(products)
+      .where(inArray(products.id, uniqueIds))
+      .returning({ id: products.id, sku: products.sku });
   });
 }
