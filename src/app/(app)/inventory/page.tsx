@@ -5,11 +5,12 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icons";
 import { BulkUploadModal } from "@/components/BulkUploadModal";
 import { ProductFormModal } from "@/components/ProductFormModal";
-import { useCanWrite } from "@/components/session";
+import { useCanWrite, useSession } from "@/components/session";
 import { StockOpModal } from "@/components/StockOpModal";
 import {
   Button,
   EmptyState,
+  Field,
   Input,
   Modal,
   ProductThumb,
@@ -31,6 +32,8 @@ export default function InventoryPage() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  const user = useSession();
+  const isAdmin = user?.role === "admin";
   const [search, setSearch] = useState("");
   const [whFilter, setWhFilter] = useState("");
   const [lowOnly, setLowOnly] = useState(false);
@@ -38,6 +41,9 @@ export default function InventoryPage() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set());
   const [deleteSelectedOpen, setDeleteSelectedOpen] = useState(false);
   const [deletingSelected, setDeletingSelected] = useState(false);
+  const [forceDeleting, setForceDeleting] = useState(false);
+  const [verifyPassword, setVerifyPassword] = useState("");
+  const [forceDeleteError, setForceDeleteError] = useState<string | null>(null);
   const selectAllRef = useRef<HTMLInputElement>(null);
 
   const [opModal, setOpModal] = useState<{ open: boolean; type: OpType; productId?: number }>({
@@ -205,6 +211,51 @@ export default function InventoryPage() {
     }
   }
 
+  /** Force delete selected SKUs — including ones that still hold stock — after
+   * verifying the signed-in Admin's password. */
+  async function forceDeleteSelected() {
+    if (forceDeleting || selectedProducts.length === 0 || !isAdmin) return;
+    if (!verifyPassword.trim()) {
+      setForceDeleteError("Enter your admin password to verify.");
+      return;
+    }
+
+    const ids = selectedProducts.map((product) => product.id);
+    setForceDeleteError(null);
+    setForceDeleting(true);
+    try {
+      const res = await fetch("/api/products/bulk/force-delete", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ ids, password: verifyPassword }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        deleted?: Array<{ id: number; sku: string }>;
+      };
+      if (!res.ok) throw new Error(data.error ?? "Force delete failed.");
+
+      const deletedIds = new Set(data.deleted?.map((product) => product.id) ?? ids);
+      setProducts((current) => current.filter((product) => !deletedIds.has(product.id)));
+      setSelectedIds((current) => new Set([...current].filter((id) => !deletedIds.has(id))));
+      setDeleteSelectedOpen(false);
+      setVerifyPassword("");
+      setForceDeleteError(null);
+      const count = data.deleted?.length ?? ids.length;
+      toast.push(
+        "success",
+        "Products force deleted",
+        `${fmtInt(count)} selected SKU${count === 1 ? " was" : "s were"} removed from the catalog, along with their stock and movement history.`,
+      );
+    } catch (e) {
+      setForceDeleteError(e instanceof Error ? e.message : "Please try again.");
+      // Refresh stock in case it changed after this selection was made.
+      void load();
+    } finally {
+      setForceDeleting(false);
+    }
+  }
+
   return (
     <div className="rise-in space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -317,7 +368,11 @@ export default function InventoryPage() {
               size="sm"
               variant="danger"
               icon="trash"
-              onClick={() => setDeleteSelectedOpen(true)}
+              onClick={() => {
+                setVerifyPassword("");
+                setForceDeleteError(null);
+                setDeleteSelectedOpen(true);
+              }}
               className="flex-1 sm:flex-none"
             >
               Delete selected
@@ -523,7 +578,7 @@ export default function InventoryPage() {
           <Modal
             open={deleteSelectedOpen}
             onClose={() => {
-              if (!deletingSelected) setDeleteSelectedOpen(false);
+              if (!deletingSelected && !forceDeleting) setDeleteSelectedOpen(false);
             }}
             title="Delete selected products?"
             subtitle={`${fmtInt(selectedProducts.length)} selected SKU${selectedProducts.length === 1 ? "" : "s"}`}
@@ -567,30 +622,85 @@ export default function InventoryPage() {
               )}
 
               {selectedWithStock.length > 0 ? (
-                <div className="rounded-lg border border-out/20 bg-out-soft p-3 text-out" role="alert">
-                  <div className="flex items-start gap-2">
-                    <Icon name="alert" className="mt-0.5 h-4 w-4 shrink-0" />
-                    <p className="text-xs font-semibold leading-relaxed">
-                      {fmtInt(selectedWithStock.length)} selected SKU{selectedWithStock.length === 1 ? " still holds" : "s still hold"} stock.
-                      Bring stock to zero or deselect those products before deleting.
-                    </p>
+                <div className="space-y-3">
+                  <div className="rounded-lg border border-out/20 bg-out-soft p-3 text-out" role="alert">
+                    <div className="flex items-start gap-2">
+                      <Icon name="alert" className="mt-0.5 h-4 w-4 shrink-0" />
+                      <p className="text-xs font-semibold leading-relaxed">
+                        {fmtInt(selectedWithStock.length)} selected SKU{selectedWithStock.length === 1 ? " still holds" : "s still hold"} stock.
+                        Bring stock to zero or deselect those products before deleting.
+                      </p>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        const stockedIds = new Set(selectedWithStock.map((product) => product.id));
+                        setSelectedIds((current) =>
+                          new Set([...current].filter((id) => !stockedIds.has(id))),
+                        );
+                        if (selectedWithStock.length === selectedProducts.length) {
+                          setDeleteSelectedOpen(false);
+                        }
+                      }}
+                      className="mt-2 text-out hover:bg-out/10 hover:text-out"
+                    >
+                      Deselect stocked SKUs
+                    </Button>
                   </div>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => {
-                      const stockedIds = new Set(selectedWithStock.map((product) => product.id));
-                      setSelectedIds((current) =>
-                        new Set([...current].filter((id) => !stockedIds.has(id))),
-                      );
-                      if (selectedWithStock.length === selectedProducts.length) {
-                        setDeleteSelectedOpen(false);
-                      }
-                    }}
-                    className="mt-2 text-out hover:bg-out/10 hover:text-out"
-                  >
-                    Deselect stocked SKUs
-                  </Button>
+
+                  {isAdmin ? (
+                    <div className="rounded-lg border border-brand/20 bg-brand-soft p-3 text-brand">
+                      <p className="text-xs font-semibold leading-relaxed">
+                        Or verify with your admin password to force delete all{" "}
+                        {fmtInt(selectedProducts.length)} selected SKU{
+                          selectedProducts.length === 1 ? "" : "s"
+                        } — including the ones that still hold stock. Their stock and movement
+                        history will be permanently removed and cannot be restored.
+                      </p>
+                      <Field label="Admin password" required>
+                        <Input
+                          type="password"
+                          value={verifyPassword}
+                          onChange={(e) => {
+                            setVerifyPassword(e.target.value);
+                            setForceDeleteError(null);
+                          }}
+                          placeholder="••••••••"
+                          autoComplete="current-password"
+                        />
+                      </Field>
+                      {forceDeleteError ? (
+                        <p className="mt-2 text-[11px] font-medium text-out">
+                          {forceDeleteError}
+                        </p>
+                      ) : null}
+                      <div className="flex justify-end gap-2 mt-3">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setVerifyPassword("")}
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="danger"
+                          icon="trash"
+                          onClick={forceDeleteSelected}
+                          loading={forceDeleting}
+                          disabled={forceDeleting || !verifyPassword.trim()}
+                        >
+                          Verify & delete all{" "}
+                          {fmtInt(selectedProducts.length)} SKU{selectedProducts.length === 1 ? "" : "s"}
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-lg border border-line bg-surface px-3 py-2.5 text-[11px] text-ink-faint">
+                      These SKUs still hold stock. Only an Admin can verify and force delete them.
+                    </div>
+                  )}
                 </div>
               ) : selectedProducts.length > 0 ? (
                 <p className="rounded-lg bg-in-soft px-3 py-2.5 text-xs font-semibold text-in">
