@@ -2,6 +2,7 @@ import {
   boolean,
   index,
   integer,
+  jsonb,
   pgTable,
   primaryKey,
   serial,
@@ -120,8 +121,21 @@ export const transactions = pgTable(
   ],
 );
 
+export const bulkUploads = pgTable("bulk_uploads", {
+  id: serial("id").primaryKey(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  createdBy: integer("created_by").references(() => users.id, { onDelete: "set null" }),
+  filename: text("filename").notNull().default(""),
+  totalRows: integer("total_rows").notNull().default(0),
+  createdCount: integer("created_count").notNull().default(0),
+  failedCount: integer("failed_count").notNull().default(0),
+  errors: jsonb("errors").notNull().default("[]"),
+  summary: jsonb("summary").notNull().default("{}"),
+});
+
 export type User = typeof users.$inferSelect;
 export type Product = typeof products.$inferSelect;
 export type Warehouse = typeof warehouses.$inferSelect;
 export type WarehouseStockRow = typeof warehouseStock.$inferSelect;
 export type Transaction = typeof transactions.$inferSelect;
+export type BulkUpload = typeof bulkUploads.$inferSelect;
