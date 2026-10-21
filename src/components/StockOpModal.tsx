@@ -108,6 +108,13 @@ export function StockOpModal({
       .slice(0, 8);
   }, [query, products]);
 
+  // A stock row means the product is listed, even when its quantity is zero.
+  const adjustmentWarehouses = warehouses.filter((warehouse) =>
+    product?.stocks.some((stock) => stock.warehouseId === warehouse.id),
+  );
+  const selectableWarehouses = type === "adjustment" ? adjustmentWarehouses : warehouses;
+  const warehouseValid = selectableWarehouses.some((warehouse) => String(warehouse.id) === warehouseId);
+
   const qtyNum = Number(qty);
   const qtyValid =
     qty !== "" &&
@@ -123,6 +130,7 @@ export function StockOpModal({
   const canSubmit =
     !!product &&
     qtyValid &&
+    warehouseValid &&
     (type === "transfer" ? warehouseId !== "" && toWarehouseId !== "" && warehouseId !== toWarehouseId : warehouseId !== "");
 
   async function submit() {
@@ -179,6 +187,9 @@ export function StockOpModal({
             key={t}
             onClick={() => {
               setType(t);
+              if (t === "adjustment" && !adjustmentWarehouses.some((w) => String(w.id) === warehouseId)) {
+                setWarehouseId("");
+              }
               setError(null);
             }}
             className={`rounded-md px-2 py-1.5 text-xs font-bold capitalize transition-colors ${
@@ -200,6 +211,7 @@ export function StockOpModal({
               onChange={(e) => {
                 setQuery(e.target.value);
                 setProductId(null);
+                if (type === "adjustment") setWarehouseId("");
                 setDropOpen(true);
               }}
               onFocus={() => setDropOpen(true)}
@@ -311,12 +323,17 @@ export function StockOpModal({
           >
             <Select value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)}>
               <option value="">Select…</option>
-              {warehouses.map((w) => (
+              {selectableWarehouses.map((w) => (
                 <option key={w.id} value={w.id}>
                   {w.name}
                 </option>
               ))}
             </Select>
+            {type === "adjustment" && !product ? (
+              <p className="mt-1 text-xs text-ink-faint">Select a product to see its warehouses.</p>
+            ) : type === "adjustment" && adjustmentWarehouses.length === 0 ? (
+              <p className="mt-1 text-xs text-ink-faint">This product is not listed in any warehouse.</p>
+            ) : null}
           </Field>
         )}
 
