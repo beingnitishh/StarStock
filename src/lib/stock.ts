@@ -79,11 +79,13 @@ export async function performOperation(input: OpInput): Promise<{
   resultingTotalPieces: number;
 }> {
   return db.transaction(async (tx) => {
+    // Serialize stock movements against deletion and other movements for this product.
     const [product] = await tx
       .select()
       .from(products)
       .where(eq(products.id, input.productId))
-      .limit(1);
+      .limit(1)
+      .for("update");
     if (!product) throw new HttpError(404, "Product not found.");
     const perCarton = Math.max(product.cartonContains, 1);
 

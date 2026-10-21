@@ -1,6 +1,6 @@
-import { and, eq, gt } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "@/db";
-import { products, warehouseStock } from "@/db/schema";
+import { products } from "@/db/schema";
 import {
   errResponse,
   HttpError,
@@ -9,6 +9,7 @@ import {
   requireUser,
   requireWriter,
 } from "@/lib/api";
+import { deleteProducts } from "@/lib/products";
 import { fetchProductRow, fetchTransactionRows } from "@/lib/query";
 
 export const dynamic = "force-dynamic";
@@ -82,9 +83,8 @@ export async function PATCH(req: Request, ctx: Ctx) {
 }
 
 /**
- * Removes a product from the catalog. Deleting a product that still holds
- * stock would silently wipe real inventory, so it is blocked until the stock
- * is brought to zero with an outbound or adjustment entry.
+ * Removes a product from the catalog only after confirming that it holds no
+ * stock in any warehouse.
  */
 export async function DELETE(_req: Request, ctx: Ctx) {
   try {
@@ -93,39 +93,7 @@ export async function DELETE(_req: Request, ctx: Ctx) {
     const id = Number(rawId);
     if (!Number.isInteger(id)) throw new HttpError(400, "Invalid product id.");
 
-    const [product] = await db
-      .select({ id: products.id, sku: products.sku })
-      .from(products)
-      .where(eq(products.id, id))
-      .limit(1);
-    if (!product) throw new HttpError(404, "Product not found.");
-
-    const stockRows = await db
-      .select({
-        warehouseId: warehouseStock.warehouseId,
-        qtyPieces: warehouseStock.qtyPieces,
-      })
-      .from(warehouseStock)
-      .where(
-        and(
-          eq(warehouseStock.productId, id),
-          gt(warehouseStock.qtyPieces, 0),
-        ),
-      );
-    if (stockRows.length > 0) {
-      const totalPieces = stockRows.reduce((acc, r) => acc + r.qtyPieces, 0);
-      throw new HttpError(
-        400,
-        `"${product.sku}" still holds ${totalPieces} pcs across ${stockRows.length} warehouse${
-          stockRows.length === 1 ? "" : "s"
-        }. Record an outbound or adjustment to bring the stock to zero before deleting it.`,
-      );
-    }
-
-    const [deleted] = await db
-      .delete(products)
-      .where(eq(products.id, id))
-      .returning({ id: products.id, sku: products.sku });
+    const [deleted] = await deleteProducts([id]);
     if (!deleted) throw new HttpError(404, "Product not found.");
     return Response.json({ ok: true, sku: deleted.sku });
   } catch (e) {

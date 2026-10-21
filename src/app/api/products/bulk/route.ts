@@ -2,9 +2,9 @@ import { asc } from "drizzle-orm";
 import ExcelJS from "exceljs";
 import { db } from "@/db";
 import { products, warehouses } from "@/db/schema";
-import { errResponse, HttpError, requireUser, requireWriter } from "@/lib/api";
+import { errResponse, HttpError, readJson, requireUser, requireWriter } from "@/lib/api";
 import { parseCsv } from "@/lib/csv";
-import { isAllWarehouses, registerProduct } from "@/lib/products";
+import { deleteProducts, isAllWarehouses, registerProduct } from "@/lib/products";
 import type { StockUnit } from "@/lib/units";
 
 export const dynamic = "force-dynamic";
@@ -417,6 +417,35 @@ export async function POST(req: Request) {
     }
 
     return Response.json({ created, failed: errors.length, errors });
+  } catch (e) {
+    return errResponse(e);
+  }
+}
+
+/** Delete a selected group of products, provided none still hold stock. */
+export async function DELETE(req: Request) {
+  try {
+    await requireWriter();
+    const body = await readJson(req);
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      throw new HttpError(400, "Request body must be a JSON object with selected product IDs.");
+    }
+    const rawIds = body.ids;
+    if (!Array.isArray(rawIds) || rawIds.length === 0) {
+      throw new HttpError(400, "Select at least one product to delete.");
+    }
+    if (rawIds.length > 5000) {
+      throw new HttpError(400, "Delete at most 5,000 products at a time.");
+    }
+
+    const ids = rawIds.map((value) => {
+      if (typeof value !== "number" || !Number.isSafeInteger(value) || value <= 0) {
+        throw new HttpError(400, "Selected product IDs must be positive whole numbers.");
+      }
+      return value;
+    });
+    const deleted = await deleteProducts(ids);
+    return Response.json({ ok: true, deleted });
   } catch (e) {
     return errResponse(e);
   }
