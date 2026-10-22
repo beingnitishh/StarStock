@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ChangeEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { Button, Field, Input, Modal, ProductThumb, Select, Spinner, useToast } from "./ui";
 import { Icon } from "./icons";
 import { prepareProductImage } from "@/lib/image-client";
@@ -32,6 +32,8 @@ export function ProductFormModal({
   const [imageBusy, setImageBusy] = useState(false);
   const [imageTouched, setImageTouched] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const skuInputRef = useRef<HTMLInputElement>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -47,6 +49,11 @@ export function ProductFormModal({
     setBusy(false);
     setImageBusy(false);
     setImageTouched(false);
+    const frame = window.requestAnimationFrame(() => {
+      if (editing) nameInputRef.current?.focus();
+      else skuInputRef.current?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -171,6 +178,7 @@ export function ProductFormModal({
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Field label="SKU" required hint={editing ? "read-only" : "unique identifier"}>
             <Input
+              ref={skuInputRef}
               value={sku}
               onChange={(e) => setSku(e.target.value.toUpperCase())}
               placeholder="e.g. BTL-750"
@@ -181,6 +189,7 @@ export function ProductFormModal({
           </Field>
           <Field label="Product name">
             <Input
+              ref={nameInputRef}
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g. Sparkling Water 750ml"

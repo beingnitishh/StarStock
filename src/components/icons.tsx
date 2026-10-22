@@ -169,6 +169,18 @@ const paths: Record<string, ReactNode> = {
     </>
   ),
   filter: <path d="M22 3H2l8 9.46V19l4 2v-8.54L22 3z" />,
+  keyboard: (
+    <>
+      <rect x="2" y="5" width="20" height="14" rx="2" />
+      <path d="M6 9h.01" />
+      <path d="M10 9h.01" />
+      <path d="M14 9h.01" />
+      <path d="M18 9h.01" />
+      <path d="M6 13h.01" />
+      <path d="M18 13h.01" />
+      <path d="M9 13h6" />
+    </>
+  ),
 };
 
 export type IconName = keyof typeof paths & string;

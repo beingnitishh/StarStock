@@ -12,12 +12,14 @@ import {
   EmptyState,
   Field,
   Input,
+  Kbd,
   Modal,
   ProductThumb,
   Select,
   StockAmount,
   useToast,
 } from "@/components/ui";
+import { isModalOpen, matchesAltKey } from "@/lib/shortcuts";
 import { fmtInt, skuCompare } from "@/lib/units";
 import type { OpType, ProductRow, Warehouse } from "@/lib/types";
 
@@ -45,6 +47,7 @@ export default function InventoryPage() {
   const [verifyPassword, setVerifyPassword] = useState("");
   const [forceDeleteError, setForceDeleteError] = useState<string | null>(null);
   const selectAllRef = useRef<HTMLInputElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const [opModal, setOpModal] = useState<{ open: boolean; type: OpType; productId?: number }>({
     open: false,
@@ -81,6 +84,33 @@ export default function InventoryPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (isModalOpen()) return;
+
+      if (matchesAltKey(e, "s")) {
+        e.preventDefault();
+        const input = searchInputRef.current;
+        if (input) {
+          input.scrollIntoView({ block: "nearest", behavior: "smooth" });
+          input.focus();
+          input.select();
+        }
+        return;
+      }
+
+      if (matchesAltKey(e, "a")) {
+        if (!canWrite) return;
+        e.preventDefault();
+        setEditing(null);
+        setFormOpen(true);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [canWrite]);
 
   const filtered = useMemo(() => {
     let list = [...products];
@@ -285,6 +315,8 @@ export default function InventoryPage() {
               <Button
                 variant="primary"
                 icon="plus"
+                title="Add product (Alt + A)"
+                aria-keyshortcuts="Alt+A"
                 onClick={() => {
                   setEditing(null);
                   setFormOpen(true);
@@ -293,6 +325,9 @@ export default function InventoryPage() {
               >
                 <span className="hidden sm:inline">List product</span>
                 <span className="sm:hidden">New</span>
+                <Kbd tone="onBrand" className="ml-0.5 hidden lg:inline-flex">
+                  Alt+A
+                </Kbd>
               </Button>
             </>
           ) : null}
@@ -307,11 +342,20 @@ export default function InventoryPage() {
             className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-faint"
           />
           <Input
+            ref={searchInputRef}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search by SKU or product name…"
-            className="pl-9"
+            title="Search product (Alt + S)"
+            aria-keyshortcuts="Alt+S"
+            className="pl-9 sm:pr-16"
           />
+          <Kbd
+            tone="light"
+            className="pointer-events-none absolute right-2.5 top-1/2 hidden -translate-y-1/2 sm:inline-flex"
+          >
+            Alt+S
+          </Kbd>
         </div>
         <Select value={whFilter} onChange={(e) => setWhFilter(e.target.value)} className="w-full flex-1 sm:w-44 sm:flex-none">
           <option value="">All warehouses</option>

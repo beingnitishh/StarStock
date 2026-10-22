@@ -6,22 +6,38 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { Icon, type IconName } from "./icons";
 import { SessionProvider } from "./session";
-import { ToastProvider, useToast } from "./ui";
+import { Kbd, Modal, ToastProvider, useToast } from "./ui";
+import { isModalOpen, isTypingTarget, matchesPlainKey } from "@/lib/shortcuts";
 import { isReadOnlyRole, ROLE_LABELS, type SessionUser } from "@/lib/types";
 
-const NAV: Array<{ href: string; label: string; icon: IconName; adminOnly?: boolean }> = [
-  { href: "/dashboard", label: "Dashboard", icon: "grid" },
-  { href: "/inventory", label: "Inventory", icon: "box" },
-  { href: "/transactions", label: "Transactions", icon: "swap" },
-  { href: "/warehouses", label: "Warehouses", icon: "warehouse" },
+const NAV: Array<{
+  href: string;
+  label: string;
+  icon: IconName;
+  shortcut?: string;
+  adminOnly?: boolean;
+}> = [
+  { href: "/dashboard", label: "Dashboard", icon: "grid", shortcut: "D" },
+  { href: "/inventory", label: "Inventory", icon: "box", shortcut: "I" },
+  { href: "/transactions", label: "Transactions", icon: "swap", shortcut: "T" },
+  { href: "/warehouses", label: "Warehouses", icon: "warehouse", shortcut: "W" },
   { href: "/users", label: "Users", icon: "users", adminOnly: true },
+];
+
+const NAV_SHORTCUTS: Array<{ key: string; href: string }> = [
+  { key: "d", href: "/dashboard" },
+  { key: "i", href: "/inventory" },
+  { key: "t", href: "/transactions" },
+  { key: "w", href: "/warehouses" },
 ];
 
 function NavItems({
   user,
+  mobile = false,
   onNavigate,
 }: {
   user: SessionUser;
+  mobile?: boolean;
   onNavigate?: () => void;
 }) {
   const pathname = usePathname();
@@ -38,6 +54,8 @@ function NavItems({
             href={n.href}
             onClick={onNavigate}
             aria-current={active ? "page" : undefined}
+            aria-keyshortcuts={n.shortcut}
+            title={n.shortcut ? `${n.label} (${n.shortcut})` : undefined}
             className={`motion-nav group relative flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13px] font-semibold transition-colors ${
               active
                 ? "bg-coal-soft text-paper"
@@ -49,9 +67,21 @@ function NavItems({
             ) : null}
             <Icon
               name={n.icon}
-              className={`h-4 w-4 ${active ? "text-[#7fc4b2]" : "text-paper/45 group-hover:text-paper/80"}`}
+              className={`h-4 w-4 shrink-0 ${active ? "text-[#7fc4b2]" : "text-paper/45 group-hover:text-paper/80"}`}
             />
-            {n.label}
+            <span className="truncate">{n.label}</span>
+            {!mobile && n.shortcut ? (
+              <Kbd
+                tone="coal"
+                className={`ml-auto min-w-5 transition-colors ${
+                  active
+                    ? "border-[#7fc4b2]/30 bg-coal text-[#7fc4b2]"
+                    : "border-coal-line/80 bg-coal-soft/50 text-paper/40 group-hover:border-coal-line group-hover:text-paper/75"
+                }`}
+              >
+                {n.shortcut}
+              </Kbd>
+            ) : null}
           </Link>
         );
       })}
@@ -62,10 +92,12 @@ function NavItems({
 function Sidebar({
   user,
   onClose,
+  onOpenShortcuts,
   mobile = false,
 }: {
   user: SessionUser;
   onClose?: () => void;
+  onOpenShortcuts?: () => void;
   mobile?: boolean;
 }) {
   const router = useRouter();
@@ -109,8 +141,31 @@ function Sidebar({
       </div>
 
       <nav className="flex-1 space-y-1 px-3">
-        <NavItems user={user} onNavigate={onClose} />
+        <NavItems user={user} mobile={mobile} onNavigate={onClose} />
       </nav>
+
+      {!mobile && onOpenShortcuts ? (
+        <div className="px-3 pb-2">
+          <button
+            type="button"
+            onClick={onOpenShortcuts}
+            title="Keyboard shortcuts (?)"
+            className="group flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-[12px] font-medium text-paper/45 transition-colors hover:bg-coal-soft/60 hover:text-paper/80"
+          >
+            <Icon
+              name="keyboard"
+              className="h-3.5 w-3.5 shrink-0 text-paper/40 transition-colors group-hover:text-paper/75"
+            />
+            <span>Shortcuts</span>
+            <Kbd
+              tone="coal"
+              className="ml-auto min-w-5 border-coal-line/80 bg-coal-soft/50 text-paper/40 transition-colors group-hover:border-coal-line group-hover:text-paper/75"
+            >
+              ?
+            </Kbd>
+          </button>
+        </div>
+      ) : null}
 
       <div className="border-t border-coal-line p-3">
         <div className="flex items-center gap-2.5 rounded-lg bg-coal-soft/70 p-2.5">
@@ -228,6 +283,80 @@ function MobileShell({ user }: { user: SessionUser }) {
   );
 }
 
+function ShortcutRow({ label, keys }: { label: string; keys: string[] }) {
+  return (
+    <div className="flex items-center justify-between gap-3 py-2">
+      <span className="text-[13px] text-ink">{label}</span>
+      <span className="flex shrink-0 items-center gap-1">
+        {keys.map((k, idx) => (
+          <span key={k} className="inline-flex items-center gap-1">
+            {idx > 0 ? <span className="text-[11px] font-semibold text-ink-faint">+</span> : null}
+            <Kbd tone="light" className="min-w-6 px-2 py-1 text-[11px]">
+              {k}
+            </Kbd>
+          </span>
+        ))}
+      </span>
+    </div>
+  );
+}
+
+function ShortcutsModal({
+  open,
+  onClose,
+  readOnly,
+}: {
+  open: boolean;
+  onClose: () => void;
+  readOnly: boolean;
+}) {
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Keyboard shortcuts"
+      subtitle="Move across pages and record stock actions without leaving the keyboard."
+      width="max-w-md"
+    >
+      <div className="space-y-4">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink-faint">
+            Navigation · when not typing
+          </p>
+          <div className="mt-1.5 divide-y divide-line rounded-lg border border-line bg-card px-3.5">
+            <ShortcutRow label="Dashboard" keys={["D"]} />
+            <ShortcutRow label="Inventory" keys={["I"]} />
+            <ShortcutRow label="Transactions" keys={["T"]} />
+            <ShortcutRow label="Warehouses" keys={["W"]} />
+          </div>
+        </div>
+
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink-faint">
+            Inventory page
+          </p>
+          <div className="mt-1.5 divide-y divide-line rounded-lg border border-line bg-card px-3.5">
+            <ShortcutRow label="Search product" keys={["Alt", "S"]} />
+            {!readOnly ? <ShortcutRow label="Add product" keys={["Alt", "A"]} /> : null}
+          </div>
+        </div>
+
+        {!readOnly ? (
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink-faint">
+              Product page
+            </p>
+            <div className="mt-1.5 divide-y divide-line rounded-lg border border-line bg-card px-3.5">
+              <ShortcutRow label="Inbound" keys={["Alt", "I"]} />
+              <ShortcutRow label="Outbound" keys={["Alt", "O"]} />
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </Modal>
+  );
+}
+
 export function AppShell({
   user,
   children,
@@ -235,12 +364,64 @@ export function AppShell({
   user: SessionUser;
   children: React.ReactNode;
 }) {
+  const router = useRouter();
+  const pathname = usePathname();
   const readOnly = isReadOnlyRole(user.role);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      // Allow Escape to leave an active page text input so single-key navigation
+      // shortcuts can be used right away without reaching for the mouse.
+      if (
+        e.key === "Escape" &&
+        !e.altKey &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !isModalOpen() &&
+        (document.activeElement instanceof HTMLInputElement ||
+          document.activeElement instanceof HTMLTextAreaElement)
+      ) {
+        document.activeElement.blur();
+        return;
+      }
+
+      // Single-key shortcuts only fire when not typing and no modal is open.
+      if (isTypingTarget(e) || isModalOpen()) return;
+
+      for (const nav of NAV_SHORTCUTS) {
+        if (matchesPlainKey(e, nav.key)) {
+          e.preventDefault();
+          if (pathname !== nav.href) {
+            router.push(nav.href);
+          }
+          return;
+        }
+      }
+
+      if (
+        e.key === "?" &&
+        !e.altKey &&
+        !e.ctrlKey &&
+        !e.metaKey &&
+        !e.repeat &&
+        !e.defaultPrevented &&
+        !e.isComposing
+      ) {
+        e.preventDefault();
+        setShortcutsOpen(true);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [pathname, router]);
+
   return (
     <ToastProvider>
       <SessionProvider user={user}>
         <MobileShell user={user} />
-        <Sidebar user={user} />
+        <Sidebar user={user} onOpenShortcuts={() => setShortcutsOpen(true)} />
         <main className="min-h-screen pt-14 lg:ml-[232px] lg:pt-0">
           {readOnly ? (
             <div className="border-b border-line bg-adj-soft">
@@ -255,6 +436,11 @@ export function AppShell({
             {children}
           </div>
         </main>
+        <ShortcutsModal
+          open={shortcutsOpen}
+          onClose={() => setShortcutsOpen(false)}
+          readOnly={readOnly}
+        />
       </SessionProvider>
     </ToastProvider>
   );
