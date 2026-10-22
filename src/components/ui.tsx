@@ -6,11 +6,8 @@ import {
   useContext,
   useEffect,
   useState,
-  type ButtonHTMLAttributes,
-  type InputHTMLAttributes,
+  type ComponentPropsWithRef,
   type ReactNode,
-  type SelectHTMLAttributes,
-  type TextareaHTMLAttributes,
 } from "react";
 import { TX_META, type TxType } from "@/lib/txmeta";
 import { fmtInt, splitCartons } from "@/lib/units";
@@ -106,7 +103,7 @@ export function Button({
   size?: "sm" | "md";
   loading?: boolean;
   icon?: IconName;
-} & ButtonHTMLAttributes<HTMLButtonElement>) {
+} & ComponentPropsWithRef<"button">) {
   const base =
     "inline-flex items-center justify-center gap-1.5 rounded-lg font-semibold motion-button focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand disabled:cursor-not-allowed disabled:opacity-50";
   const sizes = size === "sm" ? "min-h-10 px-2.5 py-1.5 text-xs sm:min-h-0" : "px-3.5 py-2 text-[13px]";
@@ -127,22 +124,51 @@ export function Button({
   );
 }
 
+/* ---------------------------- Shortcut key badge ---------------------------- */
+
+type KbdTone = "light" | "onBrand" | "coal";
+
+export function Kbd({
+  children,
+  tone = "light",
+  className = "",
+}: {
+  children: ReactNode;
+  tone?: KbdTone;
+  className?: string;
+}) {
+  const tones: Record<KbdTone, string> = {
+    light:
+      "border-line-strong bg-surface text-ink-soft shadow-[0_1px_0_0_var(--color-line-strong)]",
+    onBrand: "border-paper/25 bg-paper/15 text-paper/90",
+    coal: "border-coal-line bg-coal-soft/70 text-paper/55",
+  };
+  return (
+    <kbd
+      aria-hidden="true"
+      className={`inline-flex items-center justify-center rounded border px-1.5 py-0.5 font-mono text-[10px] font-semibold leading-none ${tones[tone]} ${className}`}
+    >
+      {children}
+    </kbd>
+  );
+}
+
 /* ---------------------------------- Inputs ---------------------------------- */
 
 const fieldCls =
   "w-full rounded-lg border border-line-strong bg-card px-3 py-2 text-sm text-ink outline-none motion-field placeholder:text-ink-faint focus:border-brand focus:ring-2 focus:ring-brand-ring/50";
 
-export function Input(props: InputHTMLAttributes<HTMLInputElement>) {
+export function Input(props: ComponentPropsWithRef<"input">) {
   const { className = "", ...rest } = props;
   return <input className={`${fieldCls} ${className}`} {...rest} />;
 }
 
-export function Textarea(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
+export function Textarea(props: ComponentPropsWithRef<"textarea">) {
   const { className = "", ...rest } = props;
   return <textarea className={`${fieldCls} resize-none ${className}`} {...rest} />;
 }
 
-export function Select(props: SelectHTMLAttributes<HTMLSelectElement>) {
+export function Select(props: ComponentPropsWithRef<"select">) {
   const { className = "", children, ...rest } = props;
   return (
     <div className="relative">
@@ -213,6 +239,9 @@ export function Modal({
     <div className="fixed inset-0 z-[70] flex items-end overflow-y-auto sm:items-start sm:justify-center sm:p-4 sm:pt-[8vh]">
       <div className="fade-in fixed inset-0 bg-coal/55" onClick={onClose} />
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
         className={`modal-in relative w-full rounded-t-xl border border-line bg-surface shadow-2xl shadow-coal/30 sm:rounded-xl ${width} max-h-[92vh] overflow-y-auto`}
       >
         <div className="sticky top-0 z-10 flex items-start justify-between border-b border-line bg-surface/95 px-4 py-4 backdrop-blur sm:px-5">

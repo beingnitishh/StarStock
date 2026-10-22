@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, Field, Input, Modal, Select, Textarea, useToast } from "./ui";
 import { Icon } from "./icons";
 import { fmtInt, toPieces } from "@/lib/units";
@@ -39,6 +39,7 @@ export function StockOpModal({
   warehouses: warehousesProp,
   initialType,
   initialProductId,
+  onTypeChange,
 }: {
   open: boolean;
   onClose: () => void;
@@ -47,15 +48,19 @@ export function StockOpModal({
   warehouses?: Warehouse[];
   initialType?: OpType;
   initialProductId?: number;
+  onTypeChange?: (type: OpType) => void;
 }) {
   const toast = useToast();
-  const [type, setType] = useState<OpType>(initialType ?? "inbound");
+  const [internalType, setInternalType] = useState<OpType>(initialType ?? "inbound");
+  const type = onTypeChange && initialType ? initialType : internalType;
   const [products, setProducts] = useState<ProductRow[]>(productsProp ?? []);
   const [warehouses, setWarehouses] = useState<Warehouse[]>(warehousesProp ?? []);
 
   const [query, setQuery] = useState("");
   const [productId, setProductId] = useState<number | null>(null);
   const [dropOpen, setDropOpen] = useState(false);
+  const productInputRef = useRef<HTMLInputElement>(null);
+  const qtyInputRef = useRef<HTMLInputElement>(null);
 
   const [qty, setQty] = useState("");
   const [unit, setUnit] = useState<"piece" | "carton">("piece");
@@ -69,7 +74,7 @@ export function StockOpModal({
 
   useEffect(() => {
     if (!open) return;
-    setType(initialType ?? "inbound");
+    setInternalType(initialType ?? "inbound");
     setProductId(initialProductId ?? null);
     const initial = productsProp?.find((p) => p.id === initialProductId);
     setQuery(initial ? initial.sku : "");
@@ -96,6 +101,11 @@ export function StockOpModal({
         .then((d) => setWarehouses(d.warehouses ?? []))
         .catch(() => {});
     }
+    const frame = window.requestAnimationFrame(() => {
+      if (initialProductId) qtyInputRef.current?.focus();
+      else productInputRef.current?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -186,7 +196,8 @@ export function StockOpModal({
           <button
             key={t}
             onClick={() => {
-              setType(t);
+              setInternalType(t);
+              onTypeChange?.(t);
               if (t === "adjustment" && !adjustmentWarehouses.some((w) => String(w.id) === warehouseId)) {
                 setWarehouseId("");
               }
@@ -206,6 +217,7 @@ export function StockOpModal({
         <div className="relative">
           <Field label="Product" required>
             <Input
+              ref={productInputRef}
               value={query}
               placeholder="Search by SKU or name…"
               onChange={(e) => {
@@ -267,6 +279,7 @@ export function StockOpModal({
             hint={type === "adjustment" ? "sets exact final stock" : undefined}
           >
             <Input
+              ref={qtyInputRef}
               type="number"
               min={0}
               step={1}

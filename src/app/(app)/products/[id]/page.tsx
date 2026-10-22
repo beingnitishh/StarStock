@@ -11,6 +11,7 @@ import { TxTable } from "@/components/TxTable";
 import {
   Button,
   EmptyState,
+  Kbd,
   Modal,
   ProductThumb,
   Spinner,
@@ -18,6 +19,7 @@ import {
   TX_META,
   useToast,
 } from "@/components/ui";
+import { isModalOpen, matchesAltKey } from "@/lib/shortcuts";
 import { fmtDate, fmtInt, splitCartons } from "@/lib/units";
 import type { OpType, ProductRow, TxRow, Warehouse } from "@/lib/types";
 
@@ -73,6 +75,30 @@ export default function ProductPage() {
     () => (typeFilter === "all" ? history : history.filter((h) => h.type === typeFilter)),
     [history, typeFilter],
   );
+
+  useEffect(() => {
+    if (loading || notFound || !product || !canWrite) return;
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!opOpen && isModalOpen()) return;
+
+      if (matchesAltKey(e, "i")) {
+        e.preventDefault();
+        setOpType("inbound");
+        setOpOpen(true);
+        return;
+      }
+
+      if (matchesAltKey(e, "o")) {
+        e.preventDefault();
+        setOpType("outbound");
+        setOpOpen(true);
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [loading, notFound, product, canWrite, opOpen]);
 
   if (loading) {
     return (
@@ -197,11 +223,37 @@ export default function ProductPage() {
             {canWrite ? (
               <div className="space-y-1.5">
                 <div className="grid grid-cols-2 gap-1.5 sm:flex sm:flex-wrap">
-                  <Button size="sm" variant="in" icon="inbound" onClick={() => { setOpType("inbound"); setOpOpen(true); }}>
+                  <Button
+                    size="sm"
+                    variant="in"
+                    icon="inbound"
+                    title="Inbound stock (Alt + I)"
+                    aria-keyshortcuts="Alt+I"
+                    onClick={() => {
+                      setOpType("inbound");
+                      setOpOpen(true);
+                    }}
+                  >
                     Inbound
+                    <Kbd tone="onBrand" className="ml-0.5 hidden lg:inline-flex">
+                      Alt+I
+                    </Kbd>
                   </Button>
-                  <Button size="sm" variant="out" icon="outbound" onClick={() => { setOpType("outbound"); setOpOpen(true); }}>
+                  <Button
+                    size="sm"
+                    variant="out"
+                    icon="outbound"
+                    title="Outbound stock (Alt + O)"
+                    aria-keyshortcuts="Alt+O"
+                    onClick={() => {
+                      setOpType("outbound");
+                      setOpOpen(true);
+                    }}
+                  >
                     Outbound
+                    <Kbd tone="onBrand" className="ml-0.5 hidden lg:inline-flex">
+                      Alt+O
+                    </Kbd>
                   </Button>
                   <Button size="sm" variant="secondary" icon="swap" onClick={() => { setOpType("transfer"); setOpOpen(true); }}>
                     Transfer
@@ -320,6 +372,7 @@ export default function ProductPage() {
             warehouses={warehouses}
             initialType={opType}
             initialProductId={product.id}
+            onTypeChange={setOpType}
           />
           <ProductFormModal
             open={editOpen}
