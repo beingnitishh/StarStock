@@ -119,11 +119,28 @@ export function StockOpModal({
   }, [query, products]);
 
   // A stock row means the product is listed, even when its quantity is zero.
-  const adjustmentWarehouses = warehouses.filter((warehouse) =>
+  const productWarehouses = warehouses.filter((warehouse) =>
     product?.stocks.some((stock) => stock.warehouseId === warehouse.id),
   );
-  const selectableWarehouses = type === "adjustment" ? adjustmentWarehouses : warehouses;
-  const warehouseValid = selectableWarehouses.some((warehouse) => String(warehouse.id) === warehouseId);
+  const isProductScopedWarehouse = type === "inbound" || type === "adjustment";
+  const selectableWarehouses = isProductScopedWarehouse ? productWarehouses : warehouses;
+  const defaultInboundWarehouseId =
+    type === "inbound" && productWarehouses.length === 1
+      ? String(productWarehouses[0].id)
+      : "";
+  const rawWarehouseId = warehouseId || defaultInboundWarehouseId;
+  const selectedWarehouseId =
+    type === "transfer"
+      ? warehouses.some((warehouse) => String(warehouse.id) === warehouseId)
+        ? warehouseId
+        : ""
+      : selectableWarehouses.some((warehouse) => String(warehouse.id) === rawWarehouseId)
+        ? rawWarehouseId
+        : defaultInboundWarehouseId;
+  const warehouseValid =
+    type === "transfer"
+      ? warehouses.some((warehouse) => String(warehouse.id) === selectedWarehouseId)
+      : selectableWarehouses.some((warehouse) => String(warehouse.id) === selectedWarehouseId);
 
   const qtyNum = Number(qty);
   const qtyValid =
@@ -133,15 +150,17 @@ export function StockOpModal({
   const pieces = product && qtyValid ? toPieces(qtyNum, unit, product.cartonContains) : 0;
 
   const currentWhPieces =
-    product && warehouseId
-      ? (product.stocks.find((s) => s.warehouseId === Number(warehouseId))?.qtyPieces ?? 0)
+    product && selectedWarehouseId
+      ? (product.stocks.find((s) => s.warehouseId === Number(selectedWarehouseId))?.qtyPieces ?? 0)
       : 0;
 
   const canSubmit =
     !!product &&
     qtyValid &&
     warehouseValid &&
-    (type === "transfer" ? warehouseId !== "" && toWarehouseId !== "" && warehouseId !== toWarehouseId : warehouseId !== "");
+    (type === "transfer"
+      ? selectedWarehouseId !== "" && toWarehouseId !== "" && selectedWarehouseId !== toWarehouseId
+      : selectedWarehouseId !== "");
 
   async function submit() {
     if (!product || !canSubmit) return;
@@ -162,7 +181,7 @@ export function StockOpModal({
           productId: product.id,
           qty: qtyNum,
           unit,
-          warehouseId: warehouseId ? Number(warehouseId) : null,
+          warehouseId: selectedWarehouseId ? Number(selectedWarehouseId) : null,
           toWarehouseId: type === "transfer" && toWarehouseId ? Number(toWarehouseId) : null,
           destination: finalDestination,
           reason: reason.trim() || null,
@@ -170,7 +189,7 @@ export function StockOpModal({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Operation failed.");
-      const whName = warehouses.find((w) => w.id === Number(warehouseId))?.name ?? "";
+      const whName = warehouses.find((w) => w.id === Number(selectedWarehouseId))?.name ?? "";
       const messages: Record<OpType, string> = {
         inbound: `+${fmtInt(pieces)} pcs received into ${whName}.`,
         outbound: `−${fmtInt(pieces)} pcs out of ${whName}${finalDestination ? ` · ${finalDestination}` : ""}.`,
@@ -198,7 +217,10 @@ export function StockOpModal({
             onClick={() => {
               setInternalType(t);
               onTypeChange?.(t);
-              if (t === "adjustment" && !adjustmentWarehouses.some((w) => String(w.id) === warehouseId)) {
+              if (
+                (t === "inbound" || t === "adjustment") &&
+                !productWarehouses.some((w) => String(w.id) === warehouseId)
+              ) {
                 setWarehouseId("");
               }
               setError(null);
@@ -223,7 +245,7 @@ export function StockOpModal({
               onChange={(e) => {
                 setQuery(e.target.value);
                 setProductId(null);
-                if (type === "adjustment") setWarehouseId("");
+                if (isProductScopedWarehouse) setWarehouseId("");
                 setDropOpen(true);
               }}
               onFocus={() => setDropOpen(true)}
@@ -243,6 +265,7 @@ export function StockOpModal({
                       e.preventDefault();
                       setProductId(p.id);
                       setQuery(p.sku);
+                      if (isProductScopedWarehouse) setWarehouseId("");
                       setDropOpen(false);
                     }}
                     className="flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-brand-soft/50"
@@ -301,7 +324,7 @@ export function StockOpModal({
         {type === "transfer" ? (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Field label="From warehouse" required>
-              <Select value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)}>
+              <Select value={selectedWarehouseId} onChange={(e) => setWarehouseId(e.target.value)}>
                 <option value="">Select…</option>
                 {warehouses.map((w) => (
                   <option key={w.id} value={w.id}>
@@ -314,7 +337,7 @@ export function StockOpModal({
               <Select value={toWarehouseId} onChange={(e) => setToWarehouseId(e.target.value)}>
                 <option value="">Select…</option>
                 {warehouses
-                  .filter((w) => String(w.id) !== warehouseId)
+                  .filter((w) => String(w.id) !== selectedWarehouseId)
                   .map((w) => (
                     <option key={w.id} value={w.id}>
                       {w.name}
@@ -334,17 +357,21 @@ export function StockOpModal({
             }
             required
           >
-            <Select value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)}>
-              <option value="">Select…</option>
+            <Select value={selectedWarehouseId} onChange={(e) => setWarehouseId(e.target.value)}>
+              {type === "inbound" && productWarehouses.length === 1 ? null : (
+                <option value="" disabled={type === "inbound"}>
+                  Select…
+                </option>
+              )}
               {selectableWarehouses.map((w) => (
                 <option key={w.id} value={w.id}>
                   {w.name}
                 </option>
               ))}
             </Select>
-            {type === "adjustment" && !product ? (
+            {isProductScopedWarehouse && !product ? (
               <p className="mt-1 text-xs text-ink-faint">Select a product to see its warehouses.</p>
-            ) : type === "adjustment" && adjustmentWarehouses.length === 0 ? (
+            ) : isProductScopedWarehouse && productWarehouses.length === 0 ? (
               <p className="mt-1 text-xs text-ink-faint">This product is not listed in any warehouse.</p>
             ) : null}
           </Field>
@@ -390,7 +417,7 @@ export function StockOpModal({
                 {qtyNum} {unit === "carton" ? `carton${qtyNum === 1 ? "" : "s"}` : `piece${qtyNum === 1 ? "" : "s"}`}
                 {unit === "carton" && product.cartonContains > 1 ? ` × ${product.cartonContains} pcs` : ""} ={" "}
                 <span className="font-mono font-bold">{fmtInt(pieces)} pieces</span>
-                {type !== "inbound" && warehouseId ? (
+                {type !== "inbound" && selectedWarehouseId ? (
                   <>
                     {" "}
                     · warehouse holds <span className="font-mono font-bold">{fmtInt(currentWhPieces)} pcs</span>
