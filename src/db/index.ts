@@ -13,7 +13,9 @@ function createPool(): Pool {
       "DATABASE_URL is required. Set it in your environment (e.g. Vercel Project Settings → Environment Variables)."
     );
   }
-  return new Pool({ connectionString: databaseUrl });
+  // Keep the pool small: serverless instances multiply connections, and the
+  // database plan has a hard connection ceiling.
+  return new Pool({ connectionString: databaseUrl, max: 3 });
 }
 
 /**

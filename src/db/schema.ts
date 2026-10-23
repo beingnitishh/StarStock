@@ -39,6 +39,24 @@ export const sessions = pgTable("sessions", {
     .defaultNow(),
 });
 
+/**
+ * Failed sign-in attempts, used to rate-limit `/api/auth/login`: five failed
+ * attempts in fifteen minutes (per username or per IP) are rejected.
+ * Rows are pruned automatically as new failures are recorded.
+ */
+export const loginAttempts = pgTable(
+  "login_attempts",
+  {
+    id: serial("id").primaryKey(),
+    username: text("username").notNull().default(""),
+    ip: text("ip").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [index("login_attempts_created_idx").on(t.createdAt)],
+);
+
 export const warehouses = pgTable("warehouses", {
   id: serial("id").primaryKey(),
   name: text("name").notNull().unique(),
@@ -153,6 +171,7 @@ export const bulkUploads = pgTable("bulk_uploads", {
 
 export type User = typeof users.$inferSelect;
 export type Product = typeof products.$inferSelect;
+export type LoginAttempt = typeof loginAttempts.$inferSelect;
 export type Warehouse = typeof warehouses.$inferSelect;
 export type WarehouseStockRow = typeof warehouseStock.$inferSelect;
 export type Transaction = typeof transactions.$inferSelect;

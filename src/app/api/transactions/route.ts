@@ -42,7 +42,13 @@ export async function GET(req: Request) {
     }
 
     const limit = url.searchParams.get("limit");
-    if (limit) filters.limit = Number(limit) || 300;
+    if (limit !== null && limit !== "") {
+      const n = Number(limit);
+      if (!Number.isFinite(n) || n < 1) {
+        throw new HttpError(400, "limit must be a number of at least 1.");
+      }
+      filters.limit = Math.floor(n);
+    }
 
     const rows = await fetchTransactionRows(filters);
     return Response.json({ transactions: rows });
