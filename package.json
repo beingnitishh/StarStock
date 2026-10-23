@@ -9,13 +9,16 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.26.0",
     "dotenv": "17.3.1",
     "drizzle-orm": "0.45.2",
     "exceljs": "^4.4.0",
+    "mcp-handler": "1.1.0",
     "next": "16.2.6",
     "pg": "8.20.0",
     "react": "19.2.6",
-    "react-dom": "19.2.6"
+    "react-dom": "19.2.6",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "4.1.17",

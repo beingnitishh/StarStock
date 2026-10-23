@@ -42,6 +42,16 @@ export default function UsersPage() {
   const [saving, setSaving] = useState(false);
   const [restoringId, setRestoringId] = useState<number | null>(null);
 
+  const [passwordFor, setPasswordFor] = useState<UserRow | null>(null);
+  const [newPassword, setNewPassword] = useState("");
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [savingPassword, setSavingPassword] = useState(false);
+
+  const [roleFor, setRoleFor] = useState<UserRow | null>(null);
+  const [newRole, setNewRole] = useState<Role>("stock_boy");
+  const [roleError, setRoleError] = useState<string | null>(null);
+  const [savingRole, setSavingRole] = useState(false);
+
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
@@ -141,6 +151,73 @@ export default function UsersPage() {
     setRestoringId(null);
   }
 
+  function openPasswordModal(user: UserRow) {
+    setPasswordFor(user);
+    setNewPassword("");
+    setPasswordError(null);
+  }
+
+  async function savePassword() {
+    if (!passwordFor) return;
+    setSavingPassword(true);
+    setPasswordError(null);
+    try {
+      const res = await fetch(`/api/users/${passwordFor.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ password: newPassword }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Could not update the password.");
+      toast.push(
+        "success",
+        "Password updated",
+        `${data.user.displayName} has been signed out of all devices.`,
+      );
+      setPasswordFor(null);
+      setNewPassword("");
+      load();
+    } catch (e) {
+      setPasswordError(
+        e instanceof Error ? e.message : "Could not update the password.",
+      );
+    } finally {
+      setSavingPassword(false);
+    }
+  }
+
+  function openRoleModal(user: UserRow) {
+    setRoleFor(user);
+    setNewRole(user.role);
+    setRoleError(null);
+  }
+
+  async function saveRole() {
+    if (!roleFor) return;
+    setSavingRole(true);
+    setRoleError(null);
+    try {
+      const res = await fetch(`/api/users/${roleFor.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ role: newRole }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Could not change the role.");
+      toast.push(
+        "success",
+        "Role updated",
+        `${data.user.displayName} is now ${ROLE_LABELS[data.user.role as Role]}.`,
+      );
+      setRoleFor(null);
+      load();
+    } catch (e) {
+      setRoleError(e instanceof Error ? e.message : "Could not change the role.");
+    } finally {
+      setSavingRole(false);
+    }
+  }
+
   if (forbidden) {
     return (
       <div className="mx-auto max-w-md pt-16">
@@ -202,7 +279,7 @@ export default function UsersPage() {
         </div>
       ) : (
         <div className="-mx-4 overflow-x-auto rounded-none border-y border-line bg-card px-4 sm:mx-0 sm:overflow-hidden sm:rounded-xl sm:border sm:px-0">
-          <table className="w-full min-w-[640px] text-left">
+          <table className="w-full min-w-[760px] text-left">
             <thead>
               <tr className="border-b border-line bg-surface text-[10px] font-bold uppercase tracking-[0.12em] text-ink-faint">
                 <th className="px-4 py-2.5">User</th>
@@ -256,14 +333,32 @@ export default function UsersPage() {
                     {u.id === meId ? (
                       <span className="text-xs font-semibold text-ink-faint">You</span>
                     ) : u.active ? (
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        icon="trash"
-                        onClick={() => setRemoving(u)}
-                      >
-                        Remove
-                      </Button>
+                      <div className="flex flex-wrap items-center justify-end gap-1.5">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          icon="pencil"
+                          onClick={() => openPasswordModal(u)}
+                        >
+                          Password
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          icon="sliders"
+                          onClick={() => openRoleModal(u)}
+                        >
+                          Role
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          icon="trash"
+                          onClick={() => setRemoving(u)}
+                        >
+                          Remove
+                        </Button>
+                      </div>
                     ) : (
                       <Button
                         size="sm"
@@ -375,6 +470,110 @@ export default function UsersPage() {
             </Button>
             <Button variant="danger" icon="trash" onClick={confirmRemove} loading={saving}>
               Remove user
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={passwordFor !== null}
+        onClose={() => {
+          if (!savingPassword) setPasswordFor(null);
+        }}
+        title="Reset password"
+        subtitle={
+          passwordFor ? `${passwordFor.displayName} · ${passwordFor.username}` : undefined
+        }
+        width="max-w-md"
+      >
+        <div className="space-y-4">
+          <p className="text-sm leading-relaxed text-ink-soft">
+            Set a new password and share it with them. They will be signed out of every
+            device right away and must use the new password next time.
+          </p>
+          <Field label="New password" required hint="6-100 characters">
+            <Input
+              type="password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              placeholder="••••••••"
+              maxLength={100}
+              autoComplete="new-password"
+            />
+          </Field>
+
+          {passwordError ? (
+            <div className="flex items-start gap-2 rounded-lg border border-out/30 bg-out-soft px-3 py-2.5 text-[13px] font-medium text-out">
+              <Icon name="alert" className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              {passwordError}
+            </div>
+          ) : null}
+
+          <div className="flex justify-end gap-2 border-t border-line pt-4">
+            <Button
+              variant="ghost"
+              onClick={() => setPasswordFor(null)}
+              disabled={savingPassword}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              icon="check"
+              onClick={savePassword}
+              loading={savingPassword}
+              disabled={newPassword.length < 6 || newPassword.length > 100}
+            >
+              Reset password
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={roleFor !== null}
+        onClose={() => {
+          if (!savingRole) setRoleFor(null);
+        }}
+        title="Change role"
+        subtitle={roleFor ? `${roleFor.displayName} · ${roleFor.username}` : undefined}
+        width="max-w-md"
+      >
+        <div className="space-y-4">
+          <Field label="Role" required>
+            <Select value={newRole} onChange={(e) => setNewRole(e.target.value as Role)}>
+              {ROLES.map((r) => (
+                <option key={r} value={r}>
+                  {ROLE_LABELS[r]}
+                  {r === "member" ? " (read-only)" : ""}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <p className="flex items-start gap-2 rounded-lg bg-surface px-3 py-2.5 text-[12px] leading-relaxed text-ink-soft ring-1 ring-line">
+            <Icon name="info" className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            {ROLE_DESCRIPTIONS[newRole]}
+          </p>
+
+          {roleError ? (
+            <div className="flex items-start gap-2 rounded-lg border border-out/30 bg-out-soft px-3 py-2.5 text-[13px] font-medium text-out">
+              <Icon name="alert" className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              {roleError}
+            </div>
+          ) : null}
+
+          <div className="flex justify-end gap-2 border-t border-line pt-4">
+            <Button variant="ghost" onClick={() => setRoleFor(null)} disabled={savingRole}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              icon="check"
+              onClick={saveRole}
+              loading={savingRole}
+              disabled={roleFor !== null && newRole === roleFor.role}
+            >
+              Save role
             </Button>
           </div>
         </div>

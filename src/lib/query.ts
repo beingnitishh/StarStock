@@ -1,4 +1,15 @@
-import { and, desc, eq, gte, ilike, lte, or } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  gte,
+  ilike,
+  inArray,
+  lte,
+  or,
+  sql,
+  type SQL,
+} from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { db } from "@/db";
 import {
@@ -8,7 +19,6 @@ import {
   warehouseStock,
   warehouses,
 } from "@/db/schema";
-import { migrateLegacyProductImages } from "./product-images";
 import { skuCompare, type StockUnit } from "./units";
 
 export type ProductStock = {
@@ -30,19 +40,28 @@ export type ProductRow = {
   stocks: ProductStock[];
 };
 
-export async function fetchProductRows(): Promise<ProductRow[]> {
-  const [prods, stockRows] = await Promise.all([
-    db.select().from(products),
-    db
-      .select({
-        productId: warehouseStock.productId,
-        warehouseId: warehouseStock.warehouseId,
-        qtyPieces: warehouseStock.qtyPieces,
-        warehouseName: warehouses.name,
-      })
-      .from(warehouseStock)
-      .innerJoin(warehouses, eq(warehouseStock.warehouseId, warehouses.id)),
-  ]);
+/**
+ * Loads product rows (each with its per-warehouse stock) for the products
+ * matching `where`. Pass `undefined` to load the whole catalogue.
+ *
+ * Only the stock rows of the selected products are fetched, so asking for a
+ * single product never pulls the whole catalogue or every warehouse balance.
+ */
+async function loadProductRows(where?: SQL): Promise<ProductRow[]> {
+  const prods = await db.select().from(products).where(where);
+  if (prods.length === 0) return [];
+
+  const stockRows = await db
+    .select({
+      productId: warehouseStock.productId,
+      warehouseId: warehouseStock.warehouseId,
+      qtyPieces: warehouseStock.qtyPieces,
+      warehouseName: warehouses.name,
+    })
+    .from(warehouseStock)
+    .innerJoin(warehouses, eq(warehouseStock.warehouseId, warehouses.id))
+    .where(inArray(warehouseStock.productId, prods.map((p) => p.id)));
+
   const byProduct = new Map<number, ProductStock[]>();
   for (const s of stockRows) {
     const arr = byProduct.get(s.productId) ?? [];
@@ -53,7 +72,8 @@ export async function fetchProductRows(): Promise<ProductRow[]> {
     });
     byProduct.set(s.productId, arr);
   }
-  const rows: ProductRow[] = prods
+
+  return prods
     .map((p) => {
       const stocks = (byProduct.get(p.id) ?? []).sort(
         (a, b) => a.warehouseId - b.warehouseId,
@@ -65,18 +85,35 @@ export async function fetchProductRows(): Promise<ProductRow[]> {
       };
     })
     .sort((a, b) => skuCompare(a.sku, b.sku));
-
-  // Heal products that stored a raw (possibly truncated) data URL in the old
-  // column: the payload moves to `product_images` and `imageUrl` becomes a
-  // lightweight served URL. No-op once there is nothing left to migrate.
-  await migrateLegacyProductImages(rows);
-
-  return rows;
 }
 
+export async function fetchProductRows(): Promise<ProductRow[]> {
+  return loadProductRows();
+}
+
+/** One product (plus its warehouse stock), or `null` when it does not exist. */
 export async function fetchProductRow(id: number): Promise<ProductRow | null> {
-  const all = await fetchProductRows();
-  return all.find((p) => p.id === id) ?? null;
+  if (!Number.isInteger(id)) return null;
+  const rows = await loadProductRows(eq(products.id, id));
+  return rows[0] ?? null;
+}
+
+/**
+ * One product looked up by its SKU, or `null`.
+ *
+ * SKUs are unique and stored as entered, so the indexed exact match runs
+ * first; only when that finds nothing do we fall back to a case-insensitive
+ * match (sheets and image file names are often typed in another case).
+ */
+export async function fetchProductBySku(sku: string): Promise<ProductRow | null> {
+  const value = sku.trim();
+  if (!value) return null;
+  const exact = await loadProductRows(eq(products.sku, value));
+  if (exact[0]) return exact[0];
+  const ci = await loadProductRows(
+    sql`lower(${products.sku}) = ${value.toLowerCase()}`,
+  );
+  return ci[0] ?? null;
 }
 
 export type TxFilters = {

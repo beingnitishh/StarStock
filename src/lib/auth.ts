@@ -1,6 +1,6 @@
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
-import { eq } from "drizzle-orm";
+import { eq, lt } from "drizzle-orm";
 import { db } from "@/db";
 import { sessions, users } from "@/db/schema";
 
@@ -42,6 +42,9 @@ export function verifyPassword(password: string, stored: string): boolean {
 export async function createSession(userId: number): Promise<void> {
   const token = randomBytes(32).toString("hex");
   const expiresAt = new Date(Date.now() + SESSION_DAYS * 86_400_000);
+  // Housekeeping: drop sessions that have already expired so the table does
+  // not keep growing with dead rows.
+  await db.delete(sessions).where(lt(sessions.expiresAt, new Date()));
   await db.insert(sessions).values({ token, userId, expiresAt });
   const store = await cookies();
   store.set(COOKIE_NAME, token, {
@@ -49,6 +52,7 @@ export async function createSession(userId: number): Promise<void> {
     sameSite: "lax",
     path: "/",
     expires: expiresAt,
+    secure: process.env.NODE_ENV === "production",
   });
 }
 
