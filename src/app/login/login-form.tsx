@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icons";
 import { Button, Field, Input } from "@/components/ui";
 
-export function LoginForm() {
+export function LoginForm({ next }: { next?: string | null }) {
   const router = useRouter();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -26,7 +26,9 @@ export function LoginForm() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Login failed.");
-      router.replace("/dashboard");
+      // `next` is a same-origin path validated by the login page (used by the
+      // OAuth consent flow to return to the authorize request).
+      router.replace(next ?? "/dashboard");
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed.");

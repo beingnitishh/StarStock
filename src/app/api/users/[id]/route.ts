@@ -8,6 +8,7 @@ import {
   requireAdmin,
 } from "@/lib/api";
 import { hashPassword, revokeUserSessions } from "@/lib/auth";
+import { revokeUserOAuthTokens } from "@/lib/oauth";
 import { ROLES, type Role } from "@/lib/roles";
 
 export const dynamic = "force-dynamic";
@@ -103,6 +104,10 @@ export async function PATCH(req: Request, ctx: Ctx) {
 
     if (!updated.active || revokeSessions) {
       await revokeUserSessions(id);
+    }
+    if (!updated.active) {
+      // A removed account also loses every MCP (OAuth) token it was granted.
+      await revokeUserOAuthTokens(id);
     }
     return Response.json({ user: updated });
   } catch (e) {
