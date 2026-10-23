@@ -81,6 +81,22 @@ export const oauthClients = pgTable("oauth_clients", {
 });
 
 /**
+ * Dynamic client registrations per IP, used to rate-limit
+ * `POST /api/oauth/register` (10 per IP per hour). Pruned automatically.
+ */
+export const oauthRegistrations = pgTable(
+  "oauth_registrations",
+  {
+    id: serial("id").primaryKey(),
+    ip: text("ip").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [index("oauth_registrations_ip_created_idx").on(t.ip, t.createdAt)],
+);
+
+/**
  * One-time authorization codes. Only the SHA-256 hash of the code is stored;
  * codes expire after 10 minutes and are deleted the moment they are redeemed.
  */
@@ -243,6 +259,7 @@ export type User = typeof users.$inferSelect;
 export type Product = typeof products.$inferSelect;
 export type LoginAttempt = typeof loginAttempts.$inferSelect;
 export type OAuthClient = typeof oauthClients.$inferSelect;
+export type OAuthRegistration = typeof oauthRegistrations.$inferSelect;
 export type OAuthCode = typeof oauthCodes.$inferSelect;
 export type OAuthToken = typeof oauthTokens.$inferSelect;
 export type Warehouse = typeof warehouses.$inferSelect;

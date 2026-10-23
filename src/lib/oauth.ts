@@ -1,8 +1,14 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { and, eq, lt, sql } from "drizzle-orm";
+import { and, eq, gte, lt, sql } from "drizzle-orm";
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 import { db } from "@/db";
-import { oauthClients, oauthCodes, oauthTokens, users } from "@/db/schema";
+import {
+  oauthClients,
+  oauthCodes,
+  oauthRegistrations,
+  oauthTokens,
+  users,
+} from "@/db/schema";
 
 /**
  * Minimal OAuth 2.1 authorization server for the StarStock MCP endpoint.
@@ -22,6 +28,17 @@ export const OAUTH_SCOPE = "starstock.read";
 export const ACCESS_TOKEN_TTL_SECONDS = 60 * 60; // 1 hour
 export const REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
 export const AUTH_CODE_TTL_SECONDS = 10 * 60; // 10 minutes
+
+/** Dynamic client registration is limited per IP to stop table flooding. */
+export const REGISTRATION_MAX_PER_HOUR = 10;
+export const REGISTRATION_WINDOW_MS = 60 * 60 * 1000;
+export const REGISTRATION_RATE_LIMIT_MESSAGE =
+  "Too many app registrations from this address. Please try again later.";
+
+/** Unused clients (never completed an authorization) are pruned after a day. */
+const CLIENT_RETENTION_MS = 24 * 60 * 60 * 1000;
+/** Registration rows older than the window never affect the limit. */
+const REGISTRATION_RETENTION_MS = 24 * 60 * 60 * 1000;
 
 /** Thrown for protocol-level failures; rendered as an OAuth error response. */
 export class OAuthError extends Error {
@@ -144,6 +161,17 @@ const CREATE_TABLES_SQL = [
       created_at timestamptz NOT NULL DEFAULT now()
     )
   `,
+  sql`
+    CREATE TABLE IF NOT EXISTS oauth_registrations (
+      id serial PRIMARY KEY,
+      ip text NOT NULL DEFAULT '',
+      created_at timestamptz NOT NULL DEFAULT now()
+    )
+  `,
+  sql`
+    CREATE INDEX IF NOT EXISTS oauth_registrations_ip_created_idx
+      ON oauth_registrations (ip, created_at)
+  `,
   sql`CREATE INDEX IF NOT EXISTS oauth_tokens_user_idx ON oauth_tokens (user_id)`,
   sql`CREATE INDEX IF NOT EXISTS oauth_tokens_client_idx ON oauth_tokens (client_id)`,
 ];
@@ -164,12 +192,69 @@ export function ensureOAuthTables(): Promise<void> {
 
 /* --------------------------------- clients -------------------------------- */
 
+/**
+ * Deletes clients registered more than 24 hours ago that were never used: no
+ * tokens issued and no authorization code outstanding. Clients that completed
+ * (or are mid-way through) a flow are kept.
+ */
+async function deleteUnusedOAuthClients(): Promise<void> {
+  const cutoff = new Date(Date.now() - CLIENT_RETENTION_MS);
+  await db.delete(oauthClients).where(
+    and(
+      lt(oauthClients.createdAt, cutoff),
+      sql`NOT EXISTS (SELECT 1 FROM ${oauthTokens} WHERE ${oauthTokens.clientId} = ${oauthClients.clientId})`,
+      sql`NOT EXISTS (SELECT 1 FROM ${oauthCodes} WHERE ${oauthCodes.clientId} = ${oauthClients.clientId})`,
+    ),
+  );
+}
+
+/** True when this IP has already created the maximum clients this hour. */
+export async function isRegistrationRateLimited(ip: string): Promise<boolean> {
+  if (!ip) return false;
+  try {
+    await ensureOAuthTables();
+    const since = new Date(Date.now() - REGISTRATION_WINDOW_MS);
+    const [row] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(oauthRegistrations)
+      .where(
+        and(eq(oauthRegistrations.ip, ip), gte(oauthRegistrations.createdAt, since)),
+      );
+    return (row?.count ?? 0) >= REGISTRATION_MAX_PER_HOUR;
+  } catch (e) {
+    // Never block a legitimate client because the limiter itself failed.
+    console.error("[oauth] could not check the registration rate limit", e);
+    return false;
+  }
+}
+
+/** Records one successful registration for this IP and prunes old rows. */
+export async function recordOAuthRegistration(ip: string): Promise<void> {
+  try {
+    await ensureOAuthTables();
+    await db.insert(oauthRegistrations).values({ ip });
+    await db
+      .delete(oauthRegistrations)
+      .where(
+        lt(
+          oauthRegistrations.createdAt,
+          new Date(Date.now() - REGISTRATION_RETENTION_MS),
+        ),
+      );
+  } catch (e) {
+    // The client is already registered; a missing counter row is tolerable.
+    console.error("[oauth] could not record a client registration", e);
+  }
+}
+
 export async function registerOAuthClient(input: {
   clientName: string;
   redirectUris: string[];
   grantTypes?: string[];
 }): Promise<OAuthClientRecord> {
   await ensureOAuthTables();
+  // Housekeeping: drop stale, never-used client registrations.
+  await deleteUnusedOAuthClients();
   const clientId = randomToken("ss_client_");
   const clientName = input.clientName.trim().slice(0, 120) || "MCP client";
   const [row] = await db

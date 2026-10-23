@@ -104,9 +104,8 @@ export async function PATCH(req: Request, ctx: Ctx) {
 
     if (!updated.active || revokeSessions) {
       await revokeUserSessions(id);
-    }
-    if (!updated.active) {
-      // A removed account also loses every MCP (OAuth) token it was granted.
+      // A removed account, or one whose password was reset, also loses every
+      // MCP (OAuth) token it was granted.
       await revokeUserOAuthTokens(id);
     }
     return Response.json({ user: updated });

@@ -13,6 +13,32 @@ export const metadata: Metadata = {
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
+/** Connector hosts we can vouch for (and any subdomain of them). */
+const KNOWN_CONNECTOR_HOSTS = ["chatgpt.com", "claude.ai"];
+
+function isKnownConnectorHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return KNOWN_CONNECTOR_HOSTS.some((known) => host === known || host.endsWith(`.${known}`));
+}
+
+/** The host the authorization code will be sent back to. */
+function redirectHost(redirectUri: string): string {
+  try {
+    return new URL(redirectUri).host;
+  } catch {
+    return redirectUri;
+  }
+}
+
+/** The bare hostname used to compare against known connector domains. */
+function redirectHostname(redirectUri: string): string {
+  try {
+    return new URL(redirectUri).hostname;
+  } catch {
+    return "";
+  }
+}
+
 function deniedPage(message: string) {
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-6">
@@ -74,6 +100,8 @@ export default async function AuthorizePage({
   }
 
   const { client, query } = outcome;
+  const backToHost = redirectHost(query.redirectUri);
+  const knownConnector = isKnownConnectorHost(redirectHostname(query.redirectUri));
 
   const hidden: Record<string, string> = {
     client_id: query.clientId,
@@ -94,7 +122,20 @@ export default async function AuthorizePage({
         <h1 className="mt-2 font-display text-xl font-bold leading-snug tracking-tight">
           {client.clientName} wants read access to StarStock as {user.displayName}
         </h1>
-        <p className="mt-2 text-sm leading-relaxed text-ink-soft">
+        <p className="mt-2 text-[13px] leading-relaxed text-ink-soft">
+          Will send you back to:{" "}
+          <span className="font-bold text-ink">{backToHost}</span>
+        </p>
+
+        {knownConnector ? null : (
+          <div className="mt-3 flex items-start gap-2 rounded-lg border border-warn/30 bg-warn-soft px-3 py-2.5 text-[12px] font-medium leading-relaxed text-warn">
+            <Icon name="alert" className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            This app is not a known ChatGPT or Claude connector. Only allow if you started this
+            connection yourself.
+          </div>
+        )}
+
+        <p className="mt-3 text-sm leading-relaxed text-ink-soft">
           It will be able to look up products, stock levels per warehouse and stock movement
           history. It cannot add, move, adjust or delete anything.
         </p>

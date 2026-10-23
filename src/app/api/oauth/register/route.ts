@@ -1,8 +1,12 @@
 import { errResponse, HttpError } from "@/lib/api";
+import { getClientIp } from "@/lib/login-attempts";
 import {
   isAcceptableRedirectUri,
+  isRegistrationRateLimited,
   OAUTH_SCOPE,
+  recordOAuthRegistration,
   registerOAuthClient,
+  REGISTRATION_RATE_LIMIT_MESSAGE,
 } from "@/lib/oauth";
 
 export const dynamic = "force-dynamic";
@@ -25,9 +29,16 @@ const CORS_HEADERS = {
  * Any https redirect URI is accepted at registration; the authorization
  * endpoint later requires an exact match against this list, which is what
  * keeps an attacker from redirecting someone else's code to themselves.
+ *
+ * Each IP may register at most 10 clients per hour.
  */
 export async function POST(req: Request) {
   try {
+    const ip = getClientIp(req);
+    if (await isRegistrationRateLimited(ip)) {
+      throw new HttpError(429, REGISTRATION_RATE_LIMIT_MESSAGE);
+    }
+
     let body: Record<string, unknown>;
     try {
       body = (await req.json()) as Record<string, unknown>;
@@ -61,6 +72,7 @@ export async function POST(req: Request) {
       redirectUris,
       grantTypes: ["authorization_code", "refresh_token"],
     });
+    await recordOAuthRegistration(ip);
 
     return Response.json(
       {
