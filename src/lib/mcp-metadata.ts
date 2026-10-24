@@ -1,5 +1,5 @@
 import { getPublicOrigin, protectedResourceHandler } from "mcp-handler";
-import { OAUTH_SCOPE } from "./oauth";
+import { OAUTH_SCOPES } from "./oauth";
 
 /**
  * RFC 9728 protected-resource metadata for the MCP endpoint.
@@ -23,7 +23,7 @@ export async function buildProtectedResourceMetadata(
   return {
     ...base,
     resource_name: "StarStock",
-    scopes_supported: [OAUTH_SCOPE],
+    scopes_supported: [...OAUTH_SCOPES],
     resource_documentation: origin,
   };
 }

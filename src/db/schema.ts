@@ -231,6 +231,14 @@ export const transactions = pgTable(
     }),
     destination: text("destination"),
     reason: text("reason"),
+    /** NULL is a historical/unknown source; new writers set an explicit label. */
+    sourceApp: text("source_app", {
+      enum: ["chatgpt", "claude", "web", "unknown"],
+    }),
+    /** NULL keeps pre-audit history valid; new movements capture the before total. */
+    previousTotalPieces: integer("previous_total_pieces"),
+    /** Optional MCP retry key; historical and ordinary web movements have NULL. */
+    clientRequestId: text("client_request_id"),
     resultingTotalPieces: integer("resulting_total_pieces").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
@@ -241,6 +249,27 @@ export const transactions = pgTable(
     index("tx_created_idx").on(t.createdAt),
     index("tx_type_idx").on(t.type),
   ],
+);
+
+/**
+ * One committed MCP response per user/request key. A transaction reserves the
+ * key and stores its response atomically with the inventory change; a recent
+ * duplicate returns this response without executing the write again.
+ */
+export const mcpWriteRequests = pgTable(
+  "mcp_write_requests",
+  {
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    clientRequestId: text("client_request_id").notNull(),
+    /** NULL only inside the uncommitted reservation; committed rows hold the original result. */
+    response: jsonb("response").$type<unknown>(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.userId, t.clientRequestId] })],
 );
 
 export const bulkUploads = pgTable("bulk_uploads", {
@@ -265,4 +294,5 @@ export type OAuthToken = typeof oauthTokens.$inferSelect;
 export type Warehouse = typeof warehouses.$inferSelect;
 export type WarehouseStockRow = typeof warehouseStock.$inferSelect;
 export type Transaction = typeof transactions.$inferSelect;
+export type McpWriteRequest = typeof mcpWriteRequests.$inferSelect;
 export type BulkUpload = typeof bulkUploads.$inferSelect;

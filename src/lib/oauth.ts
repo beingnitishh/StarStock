@@ -9,6 +9,7 @@ import {
   oauthTokens,
   users,
 } from "@/db/schema";
+import { sourceAppForRedirectUris } from "./source-app";
 
 /**
  * Minimal OAuth 2.1 authorization server for the StarStock MCP endpoint.
@@ -25,9 +26,51 @@ import {
  */
 
 export const OAUTH_SCOPE = "starstock.read";
+/** Write access is opt-in; existing read-only tokens never gain it on refresh. */
+export const OAUTH_WRITE_SCOPE = "starstock.write";
+export const OAUTH_SCOPES = [OAUTH_SCOPE, OAUTH_WRITE_SCOPE] as const;
 export const ACCESS_TOKEN_TTL_SECONDS = 60 * 60; // 1 hour
 export const REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
 export const AUTH_CODE_TTL_SECONDS = 10 * 60; // 10 minutes
+
+const OAUTH_WRITE_HOSTS = ["chatgpt.com", "claude.ai"] as const;
+
+/** True only for an HTTPS callback on ChatGPT/Claude or one of their subdomains. */
+export function isWriteEligibleRedirectUri(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:") return false;
+    const hostname = url.hostname.toLowerCase();
+    return OAUTH_WRITE_HOSTS.some(
+      (allowed) => hostname === allowed || hostname.endsWith(`.${allowed}`),
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Fail closed for mixed/incomplete registrations: every registered callback
+ * must be on an eligible connector host before this client can receive write.
+ */
+export function clientSupportsWriteScope(redirectUris: unknown): boolean {
+  return (
+    Array.isArray(redirectUris) &&
+    redirectUris.length > 0 &&
+    redirectUris.every((uri) => isWriteEligibleRedirectUri(uri))
+  );
+}
+
+/** Server-side scope ceiling used at authorization, issuance, refresh and verification. */
+export function scopeForOAuthClient(requested: string, redirectUris: unknown): string {
+  const wanted = new Set(requested.split(/\s+/).filter(Boolean));
+  const granted = [OAUTH_SCOPE];
+  if (wanted.has(OAUTH_WRITE_SCOPE) && clientSupportsWriteScope(redirectUris)) {
+    granted.push(OAUTH_WRITE_SCOPE);
+  }
+  return granted.join(" ");
+}
 
 /** Dynamic client registration is limited per IP to stop table flooding. */
 export const REGISTRATION_MAX_PER_HOUR = 10;
@@ -304,6 +347,13 @@ export async function createAuthorizationCode(input: {
   scope: string;
 }): Promise<string> {
   await ensureOAuthTables();
+  // Re-check server-held registration even though the authorize route already
+  // validated it. A direct/internal caller cannot mint a write code for an
+  // unrecognized redirect host.
+  const client = await getOAuthClient(input.clientId);
+  if (!client || !client.redirectUris.includes(input.redirectUri)) {
+    throw new OAuthError("invalid_client", "The OAuth client or redirect URI is not registered.");
+  }
   const code = randomToken("ss_code_");
   await db.insert(oauthCodes).values({
     codeHash: sha256Hex(code),
@@ -312,7 +362,7 @@ export async function createAuthorizationCode(input: {
     redirectUri: input.redirectUri,
     codeChallenge: input.codeChallenge,
     codeChallengeMethod: input.codeChallengeMethod,
-    scope: input.scope,
+    scope: scopeForOAuthClient(input.scope, client.redirectUris),
     expiresAt: new Date(Date.now() + AUTH_CODE_TTL_SECONDS * 1000),
   });
   // Opportunistic cleanup of codes that can no longer be redeemed.
@@ -382,13 +432,18 @@ async function persistTokenPair(
   const accessToken = randomToken("ss_at_");
   const refreshToken = randomToken("ss_rt_");
   const now = Date.now();
+  // Token exchange and refresh both pass through here. Re-read the immutable
+  // client registration and re-apply the host policy instead of trusting the
+  // scope string supplied by a caller or stored on an older token.
+  const client = await getOAuthClient(clientId);
+  const effectiveScope = scopeForOAuthClient(scope, client?.redirectUris);
   await db.insert(oauthTokens).values([
     {
       tokenHash: sha256Hex(accessToken),
       kind: "access" as const,
       clientId,
       userId,
-      scope,
+      scope: effectiveScope,
       expiresAt: new Date(now + ACCESS_TOKEN_TTL_SECONDS * 1000),
     },
     {
@@ -396,7 +451,7 @@ async function persistTokenPair(
       kind: "refresh" as const,
       clientId,
       userId,
-      scope,
+      scope: effectiveScope,
       expiresAt: new Date(now + REFRESH_TOKEN_TTL_SECONDS * 1000),
     },
   ]);
@@ -405,7 +460,7 @@ async function persistTokenPair(
     token_type: "Bearer",
     expires_in: ACCESS_TOKEN_TTL_SECONDS,
     refresh_token: refreshToken,
-    scope,
+    scope: effectiveScope,
   };
 }
 
@@ -484,9 +539,11 @@ export async function verifyAccessToken(
       displayName: users.displayName,
       role: users.role,
       active: users.active,
+      redirectUris: oauthClients.redirectUris,
     })
     .from(oauthTokens)
     .innerJoin(users, eq(oauthTokens.userId, users.id))
+    .leftJoin(oauthClients, eq(oauthTokens.clientId, oauthClients.clientId))
     .where(
       and(
         eq(oauthTokens.tokenHash, sha256Hex(token)),
@@ -506,13 +563,16 @@ export async function verifyAccessToken(
   return {
     token,
     clientId: row.clientId,
-    scopes: row.scope ? row.scope.split(/\s+/).filter(Boolean) : [],
+    scopes: scopeForOAuthClient(row.scope, row.redirectUris).split(/\s+/).filter(Boolean),
     expiresAt: Math.floor(row.expiresAt.getTime() / 1000),
     extra: {
       userId: row.userId,
       username: row.username,
       displayName: row.displayName,
       role: row.role,
+      // Derived from immutable, server-stored DCR callback registrations —
+      // never from client_name, headers, prompts, or tool arguments.
+      sourceApp: sourceAppForRedirectUris(row.redirectUris),
     },
   };
 }

@@ -1,5 +1,6 @@
 import {
   and,
+  asc,
   desc,
   eq,
   gte,
@@ -19,6 +20,8 @@ import {
   warehouseStock,
   warehouses,
 } from "@/db/schema";
+import { ensureMcpInventorySchema } from "./mcp-schema";
+import { normalizeApplicationSource, type ApplicationSource } from "./source-app";
 import { skuCompare, type StockUnit } from "./units";
 
 export type ProductStock = {
@@ -40,15 +43,10 @@ export type ProductRow = {
   stocks: ProductStock[];
 };
 
-/**
- * Loads product rows (each with its per-warehouse stock) for the products
- * matching `where`. Pass `undefined` to load the whole catalogue.
- *
- * Only the stock rows of the selected products are fetched, so asking for a
- * single product never pulls the whole catalogue or every warehouse balance.
- */
-async function loadProductRows(where?: SQL): Promise<ProductRow[]> {
-  const prods = await db.select().from(products).where(where);
+type ProductEntity = typeof products.$inferSelect;
+
+/** Attach only the stock rows belonging to the supplied product page. */
+async function hydrateProductRows(prods: ProductEntity[]): Promise<ProductRow[]> {
   if (prods.length === 0) return [];
 
   const stockRows = await db
@@ -63,28 +61,39 @@ async function loadProductRows(where?: SQL): Promise<ProductRow[]> {
     .where(inArray(warehouseStock.productId, prods.map((p) => p.id)));
 
   const byProduct = new Map<number, ProductStock[]>();
-  for (const s of stockRows) {
-    const arr = byProduct.get(s.productId) ?? [];
-    arr.push({
-      warehouseId: s.warehouseId,
-      warehouseName: s.warehouseName,
-      qtyPieces: s.qtyPieces,
+  for (const stock of stockRows) {
+    const rows = byProduct.get(stock.productId) ?? [];
+    rows.push({
+      warehouseId: stock.warehouseId,
+      warehouseName: stock.warehouseName,
+      qtyPieces: stock.qtyPieces,
     });
-    byProduct.set(s.productId, arr);
+    byProduct.set(stock.productId, rows);
   }
 
-  return prods
-    .map((p) => {
-      const stocks = (byProduct.get(p.id) ?? []).sort(
-        (a, b) => a.warehouseId - b.warehouseId,
-      );
-      return {
-        ...p,
-        totalPieces: stocks.reduce((acc, s) => acc + s.qtyPieces, 0),
-        stocks,
-      };
-    })
-    .sort((a, b) => skuCompare(a.sku, b.sku));
+  return prods.map((product) => {
+    const stocks = (byProduct.get(product.id) ?? []).sort(
+      (a, b) => a.warehouseId - b.warehouseId,
+    );
+    return {
+      ...product,
+      totalPieces: stocks.reduce((total, stock) => total + stock.qtyPieces, 0),
+      stocks,
+    };
+  });
+}
+
+/**
+ * Loads product rows (each with its per-warehouse stock) for the products
+ * matching `where`. Pass `undefined` to load the whole catalogue.
+ *
+ * Only the stock rows of the selected products are fetched, so asking for a
+ * single product never pulls the whole catalogue or every warehouse balance.
+ */
+async function loadProductRows(where?: SQL): Promise<ProductRow[]> {
+  const prods = await db.select().from(products).where(where);
+  const rows = await hydrateProductRows(prods);
+  return rows.sort((a, b) => skuCompare(a.sku, b.sku));
 }
 
 export async function fetchProductRows(): Promise<ProductRow[]> {
@@ -116,6 +125,76 @@ export async function fetchProductBySku(sku: string): Promise<ProductRow | null>
   return ci[0] ?? null;
 }
 
+export type ProductPage = {
+  products: ProductRow[];
+  totalCount: number;
+};
+
+/**
+ * Efficient offset pagination for MCP. Product id is the stable order and the
+ * stock query is bounded to this page rather than hydrating the whole catalogue.
+ */
+export async function fetchProductPage(limit: number, offset: number): Promise<ProductPage> {
+  const [countRows, prods] = await Promise.all([
+    db.select({ value: sql<number>`count(*)::int` }).from(products),
+    db.select().from(products).orderBy(asc(products.id)).limit(limit).offset(offset),
+  ]);
+  return {
+    products: await hydrateProductRows(prods),
+    totalCount: countRows[0]?.value ?? 0,
+  };
+}
+
+export type CatalogueSummary = {
+  totalProducts: number;
+  zeroStockProducts: number;
+  totalPieces: number;
+  warehouses: Array<{ id: number; name: string; totalPieces: number }>;
+};
+
+/** Database-level catalogue totals; products without any stock row count as zero. */
+export async function fetchCatalogueSummary(): Promise<CatalogueSummary> {
+  const [aggregateResult, warehouseRows] = await Promise.all([
+    db.execute(sql`
+      WITH product_totals AS (
+        SELECT ${products.id} AS product_id,
+               coalesce(sum(${warehouseStock.qtyPieces}), 0)::numeric AS total_pieces
+        FROM ${products}
+        LEFT JOIN ${warehouseStock} ON ${warehouseStock.productId} = ${products.id}
+        GROUP BY ${products.id}
+      )
+      SELECT count(*)::int AS total_products,
+             count(*) FILTER (WHERE total_pieces = 0)::int AS zero_stock_products,
+             coalesce(sum(total_pieces), 0)::text AS total_pieces
+      FROM product_totals
+    `),
+    db
+      .select({
+        id: warehouses.id,
+        name: warehouses.name,
+        totalPieces: sql<string>`coalesce(sum(${warehouseStock.qtyPieces}), 0)::text`,
+      })
+      .from(warehouses)
+      .leftJoin(warehouseStock, eq(warehouseStock.warehouseId, warehouses.id))
+      .groupBy(warehouses.id, warehouses.name)
+      .orderBy(asc(warehouses.id)),
+  ]);
+
+  const aggregate = aggregateResult.rows[0] as
+    | { total_products: number; zero_stock_products: number; total_pieces: string }
+    | undefined;
+  return {
+    totalProducts: Number(aggregate?.total_products ?? 0),
+    zeroStockProducts: Number(aggregate?.zero_stock_products ?? 0),
+    totalPieces: Number(aggregate?.total_pieces ?? 0),
+    warehouses: warehouseRows.map((warehouse) => ({
+      id: warehouse.id,
+      name: warehouse.name,
+      totalPieces: Number(warehouse.totalPieces),
+    })),
+  };
+}
+
 export type TxFilters = {
   q?: string;
   type?: string;
@@ -135,6 +214,9 @@ export type TxRow = {
   qtyPieces: number;
   destination: string | null;
   reason: string | null;
+  sourceApp: ApplicationSource;
+  previousTotalPieces: number | null;
+  clientRequestId: string | null;
   resultingTotalPieces: number;
   createdAt: Date;
   productId: number;
@@ -147,6 +229,9 @@ export type TxRow = {
 };
 
 export async function fetchTransactionRows(f: TxFilters): Promise<TxRow[]> {
+  // The web history UI can be the first request after deployment. Bootstrap
+  // nullable audit columns before selecting them, just like OAuth tables.
+  await ensureMcpInventorySchema();
   const whFrom = alias(warehouses, "wh_from");
   const whTo = alias(warehouses, "wh_to");
   const conds = [];
@@ -187,6 +272,9 @@ export async function fetchTransactionRows(f: TxFilters): Promise<TxRow[]> {
       qtyPieces: transactions.qtyPieces,
       destination: transactions.destination,
       reason: transactions.reason,
+      sourceApp: transactions.sourceApp,
+      previousTotalPieces: transactions.previousTotalPieces,
+      clientRequestId: transactions.clientRequestId,
       resultingTotalPieces: transactions.resultingTotalPieces,
       createdAt: transactions.createdAt,
       productId: transactions.productId,
@@ -206,12 +294,13 @@ export async function fetchTransactionRows(f: TxFilters): Promise<TxRow[]> {
     .orderBy(desc(transactions.createdAt), desc(transactions.id))
     .limit(Math.min(f.limit ?? 300, 500));
 
-  return rows.map((r) => ({
-    ...r,
-    type: r.type as TxRow["type"],
-    enteredUnit: r.enteredUnit as StockUnit,
-    sku: r.sku ?? "",
-    productName: r.productName ?? "",
-    cartonContains: r.cartonContains ?? 1,
+  return rows.map((row) => ({
+    ...row,
+    type: row.type as TxRow["type"],
+    enteredUnit: row.enteredUnit as StockUnit,
+    sourceApp: normalizeApplicationSource(row.sourceApp),
+    sku: row.sku ?? "",
+    productName: row.productName ?? "",
+    cartonContains: row.cartonContains ?? 1,
   }));
 }

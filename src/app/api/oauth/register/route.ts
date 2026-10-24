@@ -3,7 +3,7 @@ import { getClientIp } from "@/lib/login-attempts";
 import {
   isAcceptableRedirectUri,
   isRegistrationRateLimited,
-  OAUTH_SCOPE,
+  OAUTH_SCOPES,
   recordOAuthRegistration,
   registerOAuthClient,
   REGISTRATION_RATE_LIMIT_MESSAGE,
@@ -83,7 +83,7 @@ export async function POST(req: Request) {
         grant_types: ["authorization_code", "refresh_token"],
         response_types: ["code"],
         token_endpoint_auth_method: "none",
-        scope: OAUTH_SCOPE,
+        scope: OAUTH_SCOPES.join(" "),
       },
       {
         status: 201,

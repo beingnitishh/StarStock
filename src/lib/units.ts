@@ -1,5 +1,8 @@
 export type StockUnit = "piece" | "carton";
 
+/** PostgreSQL integer ceiling used by stock and transaction quantity columns. */
+export const MAX_STOCK_PIECES = 2_147_483_647;
+
 /** Convert an entered quantity in the given unit to pieces. */
 export function toPieces(qty: number, unit: StockUnit, cartonContains: number): number {
   const per = cartonContains > 0 ? cartonContains : 1;
