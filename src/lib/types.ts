@@ -1,4 +1,5 @@
 import type { Role } from "./roles";
+import type { ApplicationSource } from "./source-app";
 
 export {
   canWriteStock,
@@ -52,6 +53,9 @@ export type TxRow = {
   qtyPieces: number;
   destination: string | null;
   reason: string | null;
+  sourceApp: ApplicationSource;
+  previousTotalPieces: number | null;
+  clientRequestId: string | null;
   resultingTotalPieces: number;
   createdAt: string;
   productId: number;

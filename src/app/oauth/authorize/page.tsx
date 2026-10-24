@@ -3,6 +3,8 @@ import { redirect } from "next/navigation";
 import { Icon } from "@/components/icons";
 import { getSessionUser } from "@/lib/auth";
 import { buildRedirectUrl, parseAuthorizeQuery } from "@/lib/oauth-authorize";
+import { isWriteEligibleRedirectUri, OAUTH_SCOPE } from "@/lib/oauth";
+import { canWriteStock } from "@/lib/roles";
 
 export const dynamic = "force-dynamic";
 
@@ -13,29 +15,12 @@ export const metadata: Metadata = {
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
-/** Connector hosts we can vouch for (and any subdomain of them). */
-const KNOWN_CONNECTOR_HOSTS = ["chatgpt.com", "claude.ai"];
-
-function isKnownConnectorHost(hostname: string): boolean {
-  const host = hostname.toLowerCase();
-  return KNOWN_CONNECTOR_HOSTS.some((known) => host === known || host.endsWith(`.${known}`));
-}
-
 /** The host the authorization code will be sent back to. */
 function redirectHost(redirectUri: string): string {
   try {
     return new URL(redirectUri).host;
   } catch {
     return redirectUri;
-  }
-}
-
-/** The bare hostname used to compare against known connector domains. */
-function redirectHostname(redirectUri: string): string {
-  try {
-    return new URL(redirectUri).hostname;
-  } catch {
-    return "";
   }
 }
 
@@ -101,7 +86,10 @@ export default async function AuthorizePage({
 
   const { client, query } = outcome;
   const backToHost = redirectHost(query.redirectUri);
-  const knownConnector = isKnownConnectorHost(redirectHostname(query.redirectUri));
+  const knownConnector = isWriteEligibleRedirectUri(query.redirectUri);
+  const writeRequested = query.writeRequested;
+  const writeAllowed = writeRequested && query.writeEligible && canWriteStock(user.role);
+  const authorizedScope = writeAllowed ? query.scope : OAUTH_SCOPE;
 
   const hidden: Record<string, string> = {
     client_id: query.clientId,
@@ -109,7 +97,7 @@ export default async function AuthorizePage({
     response_type: query.responseType,
     code_challenge: query.codeChallenge,
     code_challenge_method: query.codeChallengeMethod,
-    scope: query.scope,
+    scope: authorizedScope,
   };
   if (query.state) hidden.state = query.state;
 
@@ -120,7 +108,7 @@ export default async function AuthorizePage({
           Authorization request
         </p>
         <h1 className="mt-2 font-display text-xl font-bold leading-snug tracking-tight">
-          {client.clientName} wants read access to StarStock as {user.displayName}
+          {client.clientName} wants {writeAllowed ? "read and inventory write" : "read"} access to StarStock as {user.displayName}
         </h1>
         <p className="mt-2 text-[13px] leading-relaxed text-ink-soft">
           Will send you back to:{" "}
@@ -137,8 +125,25 @@ export default async function AuthorizePage({
 
         <p className="mt-3 text-sm leading-relaxed text-ink-soft">
           It will be able to look up products, stock levels per warehouse and stock movement
-          history. It cannot add, move, adjust or delete anything.
+          history. {writeAllowed
+            ? "It can also create products and record inbound or outbound stock as you. It cannot transfer, adjust or delete stock, or manage warehouses and users."
+            : "It cannot add, move, adjust or delete anything."}
         </p>
+
+        {writeRequested && !query.writeEligible ? (
+          <p className="mt-3 rounded-lg border border-warn/30 bg-warn-soft px-3 py-2.5 text-[12px] font-medium leading-relaxed text-warn">
+            Inventory write access is available only to clients whose registered redirect host is
+            chatgpt.com, claude.ai, or a subdomain of either. This client requested write access,
+            but it will receive starstock.read only.
+          </p>
+        ) : null}
+
+        {writeRequested && query.writeEligible && !canWriteStock(user.role) ? (
+          <p className="mt-3 rounded-lg border border-warn/30 bg-warn-soft px-3 py-2.5 text-[12px] font-medium leading-relaxed text-warn">
+            Your Member account is read-only. Only starstock.read permission will be granted, even
+            though this app requested inventory write access.
+          </p>
+        ) : null}
 
         <div className="mt-4 space-y-1.5 rounded-lg bg-surface px-3.5 py-3 text-[12px] leading-relaxed text-ink-soft ring-1 ring-line">
           <p className="flex items-center gap-2">
@@ -146,8 +151,13 @@ export default async function AuthorizePage({
             Read products, stock and transactions
           </p>
           <p className="flex items-center gap-2">
-            <Icon name="x" className="h-3.5 w-3.5 shrink-0 text-ink-faint" />
-            No changes to stock, products, warehouses or users
+            <Icon
+              name={writeAllowed ? "check" : "x"}
+              className={`h-3.5 w-3.5 shrink-0 ${writeAllowed ? "text-in" : "text-ink-faint"}`}
+            />
+            {writeAllowed
+              ? "Create products and record inbound/outbound stock"
+              : "No changes to stock, products, warehouses or users"}
           </p>
         </div>
 

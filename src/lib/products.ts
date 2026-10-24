@@ -1,8 +1,18 @@
-import { asc, inArray } from "drizzle-orm";
+import { asc, eq, inArray } from "drizzle-orm";
 import { db } from "@/db";
-import { products, transactions, warehouseStock, warehouses } from "@/db/schema";
+import {
+  products,
+  transactions,
+  warehouseStock,
+  warehouses,
+  type Product,
+  type Transaction,
+} from "@/db/schema";
 import { HttpError } from "./api";
-import { toPieces, type StockUnit } from "./units";
+import type { DbTransaction } from "./db-transaction";
+import { ensureMcpInventorySchema } from "./mcp-schema";
+import type { ApplicationSource } from "./source-app";
+import { MAX_STOCK_PIECES, toPieces, type StockUnit } from "./units";
 
 export const ALL_WAREHOUSES = "ALL" as const;
 export type WarehouseId = number | typeof ALL_WAREHOUSES;
@@ -15,6 +25,17 @@ export type RegisterInput = {
   cartonContains: number;
   openingQty: number;
   warehouseId: WarehouseId;
+};
+
+export type OpeningTransactionAudit = {
+  transaction: Transaction;
+  warehouseName: string;
+};
+
+export type RegisterProductDetailedResult = {
+  product: Product;
+  stockWarehouses: Array<{ id: number; name: string }>;
+  openingTransactions: OpeningTransactionAudit[];
 };
 
 export function isAllWarehouses(value: unknown): boolean {
@@ -45,44 +66,97 @@ export function normalizeWarehouseId(value: unknown): WarehouseId | null {
   return null;
 }
 
+function isUniqueViolation(error: unknown): boolean {
+  return (error as { code?: string } | null)?.code === "23505";
+}
+
 /**
- * Creates a product, applies its opening stock to a warehouse and records the
- * opening stock as the first inbound transaction.
- * When warehouseId is "ALL", the opening stock is replicated to every
- * warehouse that exists at creation time. The product will then appear in the
- * inventory panel under each warehouse, and the aggregate total is the sum
- * across all warehouses.
+ * Detailed product registration used by MCP. The compatibility wrapper below
+ * retains the original web/seed return contract while sharing this one atomic
+ * implementation.
  */
-export async function registerProduct(input: RegisterInput, userId: number) {
-  return db.transaction(async (tx) => {
-    const openingPieces = toPieces(
-      input.openingQty,
-      input.stockUnit,
-      input.cartonContains,
-    );
+export async function registerProductDetailedInTransaction(
+  tx: DbTransaction,
+  input: RegisterInput,
+  userId: number,
+  sourceApp: ApplicationSource = "web",
+  clientRequestId: string | null = null,
+): Promise<RegisterProductDetailedResult> {
+  const sku = input.sku.trim();
+  if (!sku || sku.length > 60) {
+    throw new HttpError(400, "SKU is required (max 60 characters).");
+  }
+  if (input.name.length > 120) {
+    throw new HttpError(400, "Product name must be 120 characters or fewer.");
+  }
+  if (
+    !Number.isInteger(input.cartonContains) ||
+    input.cartonContains < 1 ||
+    input.cartonContains > MAX_STOCK_PIECES
+  ) {
+    throw new HttpError(400, "Carton Contains must be a whole number of at least 1.");
+  }
+  if (!Number.isInteger(input.openingQty) || input.openingQty < 0) {
+    throw new HttpError(400, "Opening stock must be a whole number (0 or more).");
+  }
 
-    // Resolve ALL warehouses case
+  const openingPieces = toPieces(
+    input.openingQty,
+    input.stockUnit,
+    input.cartonContains,
+  );
+  if (!Number.isSafeInteger(openingPieces) || openingPieces > MAX_STOCK_PIECES) {
+    throw new HttpError(400, "Opening stock is too large for StarStock's quantity limits.");
+  }
+
+  try {
+    const existing = await tx
+      .select({ id: products.id })
+      .from(products)
+      .where(eq(products.sku, sku))
+      .limit(1);
+    if (existing.length > 0) {
+      throw new HttpError(409, `A product with SKU "${sku}" already exists.`);
+    }
+
+    // Resolve ALL warehouses case. A fixed order also makes the opening
+    // transaction sequence deterministic.
     const isAll = input.warehouseId === ALL_WAREHOUSES;
-
-    let allWarehouseIds: number[] | null = null;
+    let selectedWarehouses: Array<{ id: number; name: string }> = [];
     if (isAll) {
-      const whRows = await tx
-        .select({ id: warehouses.id })
-        .from(warehouses);
-      if (whRows.length === 0) {
+      selectedWarehouses = await tx
+        .select({ id: warehouses.id, name: warehouses.name })
+        .from(warehouses)
+        .orderBy(asc(warehouses.id));
+      if (selectedWarehouses.length === 0) {
         throw new HttpError(400, "Create a warehouse before listing products.");
       }
-      allWarehouseIds = whRows.map((w) => w.id);
+    } else {
+      if (!Number.isInteger(input.warehouseId) || (input.warehouseId as number) <= 0) {
+        throw new HttpError(400, "Select the warehouse where the opening stock is stored.");
+      }
+      const selected = await tx
+        .select({ id: warehouses.id, name: warehouses.name })
+        .from(warehouses)
+        .where(eq(warehouses.id, input.warehouseId as number))
+        .limit(1);
+      if (!selected[0]) {
+        throw new HttpError(400, "Selected warehouse does not exist.");
+      }
+      selectedWarehouses = selected;
     }
 
     const totalOpeningPieces = isAll
-      ? openingPieces * (allWarehouseIds?.length ?? 0)
+      ? openingPieces * selectedWarehouses.length
       : openingPieces;
+    if (!Number.isSafeInteger(totalOpeningPieces) || totalOpeningPieces > MAX_STOCK_PIECES) {
+      throw new HttpError(400, "Opening stock is too large for StarStock's quantity limits.");
+    }
 
-    const [p] = await tx
+    const [product] = await tx
       .insert(products)
       .values({
-        sku: input.sku,
+        sku,
         name: input.name,
         imageUrl: input.imageUrl,
         stockUnit: input.stockUnit,
@@ -91,81 +165,90 @@ export async function registerProduct(input: RegisterInput, userId: number) {
         createdBy: userId,
       })
       .returning();
+    if (!product) throw new Error("Product insert returned no row.");
 
-    if (isAll && allWarehouseIds) {
-      if (openingPieces > 0) {
-        // Replicate opening stock to every warehouse, creating one inbound
-        // transaction per warehouse so history is traceable per warehouse.
-        for (let i = 0; i < allWarehouseIds.length; i++) {
-          const whId = allWarehouseIds[i];
-          await tx.insert(warehouseStock).values({
-            productId: p.id,
-            warehouseId: whId,
-            qtyPieces: openingPieces,
-            updatedAt: new Date(),
-          });
-          // Incremental total so transactions reflect the growing aggregate.
-          const resultingTotalPieces = openingPieces * (i + 1);
-          await tx.insert(transactions).values({
+    const openingTransactions: OpeningTransactionAudit[] = [];
+
+    if (openingPieces > 0) {
+      // One stock row and one inbound transaction per selected warehouse.
+      // For ALL, resulting totals increase in the same deterministic order.
+      for (let index = 0; index < selectedWarehouses.length; index++) {
+        const warehouse = selectedWarehouses[index];
+        await tx.insert(warehouseStock).values({
+          productId: product.id,
+          warehouseId: warehouse.id,
+          qtyPieces: openingPieces,
+          updatedAt: new Date(),
+        });
+        const previousTotalPieces = openingPieces * index;
+        const resultingTotalPieces = openingPieces * (index + 1);
+        const [transaction] = await tx
+          .insert(transactions)
+          .values({
             type: "inbound",
-            productId: p.id,
+            productId: product.id,
             userId,
             enteredQty: input.openingQty,
             enteredUnit: input.stockUnit,
             qtyPieces: openingPieces,
-            warehouseId: whId,
+            warehouseId: warehouse.id,
             reason: "Opening stock",
+            sourceApp,
+            previousTotalPieces,
+            clientRequestId,
             resultingTotalPieces,
-          });
-        }
-      } else {
-        // Opening qty is 0 but user explicitly chose All Warehouses: create
-        // zero-quantity rows so the product is visibly listed in every
-        // warehouse on the inventory panel (stock by warehouse).
-        for (const whId of allWarehouseIds) {
-          await tx.insert(warehouseStock).values({
-            productId: p.id,
-            warehouseId: whId,
-            qtyPieces: 0,
-            updatedAt: new Date(),
-          });
-        }
+          })
+          .returning();
+        if (!transaction) throw new Error("Opening-stock transaction insert returned no row.");
+        openingTransactions.push({ transaction, warehouseName: warehouse.name });
       }
     } else {
-      // Single warehouse — create the stock row even for zero opening so the
-      // product is visibly listed only in the chosen warehouse (with 0 on
-      // hand). Bulk uploads rely on this to avoid the product appearing as
-      // “listed in every warehouse”.
-      const singleId = input.warehouseId as number;
-      if (openingPieces > 0) {
+      // Preserve the existing listing behaviour: zero-opening products get
+      // zero-quantity rows in their selected warehouse(s), but no zero-qty
+      // movement is invented in transaction history.
+      for (const warehouse of selectedWarehouses) {
         await tx.insert(warehouseStock).values({
-          productId: p.id,
-          warehouseId: singleId,
-          qtyPieces: openingPieces,
-          updatedAt: new Date(),
-        });
-        await tx.insert(transactions).values({
-          type: "inbound",
-          productId: p.id,
-          userId,
-          enteredQty: input.openingQty,
-          enteredUnit: input.stockUnit,
-          qtyPieces: openingPieces,
-          warehouseId: singleId,
-          reason: "Opening stock",
-          resultingTotalPieces: openingPieces,
-        });
-      } else {
-        await tx.insert(warehouseStock).values({
-          productId: p.id,
-          warehouseId: singleId,
+          productId: product.id,
+          warehouseId: warehouse.id,
           qtyPieces: 0,
           updatedAt: new Date(),
         });
       }
     }
-    return p;
-  });
+
+    return { product, stockWarehouses: selectedWarehouses, openingTransactions };
+  } catch (error) {
+    // The unique constraint remains the final guard when two registrations
+    // race after the pre-check. Never turn that race into a false success.
+    if (isUniqueViolation(error)) {
+      throw new HttpError(409, `A product with SKU "${sku}" already exists.`);
+    }
+    throw error;
+  }
+}
+
+/** Standalone/web entry point; MCP uses the transaction-aware variant above. */
+export async function registerProductDetailed(
+  input: RegisterInput,
+  userId: number,
+  sourceApp: ApplicationSource = "web",
+): Promise<RegisterProductDetailedResult> {
+  await ensureMcpInventorySchema();
+  return db.transaction((tx) =>
+    registerProductDetailedInTransaction(tx, input, userId, sourceApp),
+  );
+}
+
+/**
+ * Original product-registration API used by the website, bulk import and seed.
+ * Its return value and web source default remain backward-compatible.
+ */
+export async function registerProduct(
+  input: RegisterInput,
+  userId: number,
+): Promise<Product> {
+  const result = await registerProductDetailed(input, userId, "web");
+  return result.product;
 }
 
 /**

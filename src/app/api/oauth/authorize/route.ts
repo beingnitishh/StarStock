@@ -4,7 +4,8 @@ import {
   parseAuthorizeQuery,
   type AuthorizeQuery,
 } from "@/lib/oauth-authorize";
-import { createAuthorizationCode } from "@/lib/oauth";
+import { createAuthorizationCode, OAUTH_SCOPE } from "@/lib/oauth";
+import { canWriteStock } from "@/lib/roles";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -89,7 +90,9 @@ export async function POST(req: Request) {
     redirectUri: query.redirectUri,
     codeChallenge: query.codeChallenge,
     codeChallengeMethod: query.codeChallengeMethod,
-    scope: query.scope,
+    // A Member may authorize a read connection even if a client requested
+    // write scope. Account permissions remain authoritative at execution too.
+    scope: canWriteStock(user.role) ? query.scope : OAUTH_SCOPE,
   });
 
   return redirectTo(

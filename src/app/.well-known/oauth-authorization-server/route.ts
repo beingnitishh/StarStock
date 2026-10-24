@@ -1,5 +1,5 @@
 import { getPublicOrigin } from "mcp-handler";
-import { OAUTH_SCOPE } from "@/lib/oauth";
+import { OAUTH_SCOPES } from "@/lib/oauth";
 
 export const dynamic = "force-dynamic";
 
@@ -25,7 +25,7 @@ export async function GET(req: Request) {
       authorization_endpoint: `${origin}/oauth/authorize`,
       token_endpoint: `${origin}/api/oauth/token`,
       registration_endpoint: `${origin}/api/oauth/register`,
-      scopes_supported: [OAUTH_SCOPE],
+      scopes_supported: [...OAUTH_SCOPES],
       response_types_supported: ["code"],
       response_modes_supported: ["query"],
       grant_types_supported: ["authorization_code", "refresh_token"],

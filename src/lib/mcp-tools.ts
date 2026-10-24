@@ -1,28 +1,29 @@
 import { asc } from "drizzle-orm";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { db } from "@/db";
 import { warehouses } from "@/db/schema";
 import {
+  fetchCatalogueSummary,
   fetchProductBySku,
+  fetchProductPage,
   fetchProductRows,
   fetchTransactionRows,
   type ProductRow,
 } from "@/lib/query";
+import { errorResult, jsonResult } from "@/lib/mcp-response";
 
 /**
- * Read-only StarStock tools exposed over MCP.
- *
- * Every tool here only reads. There are deliberately no tools that create,
- * move, adjust or delete stock: an MCP client can look, never touch. Each
- * result contains a short human-readable summary followed by the same data as
- * JSON so a model can both quote it and reason over it.
+ * Read-only StarStock tools exposed over MCP. Each result contains a short
+ * human-readable summary followed by the same data as JSON so a model can both
+ * quote it and reason over it. Write tools live in mcp-write-tools.ts.
  */
 
 const MAX_SEARCH_RESULTS = 25;
 const MAX_TRANSACTIONS = 100;
 const MAX_LOW_STOCK_ROWS = 100;
+export const MAX_PRODUCT_PAGE_SIZE = 50;
+const DEFAULT_PRODUCT_PAGE_SIZE = 25;
 
 type WarehouseQty = { warehouse: string; warehouseId: number; qtyPieces: number };
 
@@ -42,23 +43,6 @@ function productSummary(product: ProductRow): string {
   return `${product.sku} — ${product.name || "unnamed"}: ${product.totalPieces} pcs total${per}${
     parts ? ` — ${parts}` : " — no warehouse stock"
   }`;
-}
-
-/** A tool result with a human summary first, then the machine-readable JSON. */
-function jsonResult(summary: string, data: unknown): CallToolResult {
-  return {
-    content: [
-      { type: "text", text: summary },
-      { type: "text", text: JSON.stringify(data, null, 2) },
-    ],
-  };
-}
-
-function errorResult(message: string): CallToolResult {
-  return {
-    isError: true,
-    content: [{ type: "text", text: message }],
-  };
 }
 
 export function registerReadOnlyTools(server: McpServer): void {
@@ -112,6 +96,86 @@ export function registerReadOnlyTools(server: McpServer): void {
           warehouses: stockBreakdown(p),
         })),
       });
+    },
+  );
+
+  server.registerTool(
+    "list_products",
+    {
+      title: "List product catalogue",
+      description:
+        "List the StarStock catalogue without a search query using stable id ordering and offset pagination. " +
+        `Returns SKU, name, stock unit, pieces per carton, total pieces, and warehouse stock. Page size is 1-${MAX_PRODUCT_PAGE_SIZE} (default ${DEFAULT_PRODUCT_PAGE_SIZE}). ` +
+        "Use totalCount and hasMore/nextOffset to retrieve subsequent pages; a single response is never represented as the whole catalogue when more pages exist.",
+      inputSchema: {
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(MAX_PRODUCT_PAGE_SIZE)
+          .optional()
+          .describe(`Products per page, 1-${MAX_PRODUCT_PAGE_SIZE}. Defaults to ${DEFAULT_PRODUCT_PAGE_SIZE}.`),
+        offset: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe("Zero-based number of products to skip in stable id order. Defaults to 0."),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async ({ limit, offset }) => {
+      const pageLimit = limit ?? DEFAULT_PRODUCT_PAGE_SIZE;
+      const pageOffset = offset ?? 0;
+      const page = await fetchProductPage(pageLimit, pageOffset);
+      const hasMore = pageOffset + page.products.length < page.totalCount;
+      const nextOffset = hasMore ? pageOffset + page.products.length : null;
+      const summary =
+        page.totalCount === 0
+          ? "The catalogue is empty."
+          : page.products.length === 0
+            ? `No products at offset ${pageOffset}. The catalogue has ${page.totalCount} products.`
+            : `Returned ${page.products.length} products at offset ${pageOffset} of ${page.totalCount} total.` +
+              (hasMore ? ` More products are available at offset ${nextOffset}.` : " This is the last page.");
+
+      return jsonResult(summary, {
+        limit: pageLimit,
+        offset: pageOffset,
+        count: page.products.length,
+        totalCount: page.totalCount,
+        hasMore,
+        nextOffset,
+        products: page.products.map((product) => ({
+          id: product.id,
+          sku: product.sku,
+          name: product.name,
+          stockUnit: product.stockUnit,
+          cartonContains: product.cartonContains,
+          totalPieces: product.totalPieces,
+          warehouses: stockBreakdown(product),
+        })),
+      });
+    },
+  );
+
+  server.registerTool(
+    "catalogue_summary",
+    {
+      title: "Catalogue summary",
+      description:
+        "Return database-aggregated catalogue totals: product count, products with zero total stock, total pieces across all warehouses, and total pieces per warehouse. " +
+        "Products with no stock rows are included as zero. No low-stock count is included because StarStock has no single configured MCP low-stock threshold.",
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async () => {
+      const summary = await fetchCatalogueSummary();
+      const warehouseText = summary.warehouses.length
+        ? summary.warehouses.map((warehouse) => `${warehouse.name}: ${warehouse.totalPieces} pcs`).join(", ")
+        : "no warehouses";
+      return jsonResult(
+        `${summary.totalProducts} products (${summary.zeroStockProducts} with zero stock), ${summary.totalPieces} pieces total — ${warehouseText}.`,
+        summary,
+      );
     },
   );
 
@@ -173,6 +237,9 @@ export function registerReadOnlyTools(server: McpServer): void {
           toWarehouse: t.toWarehouseName,
           destination: t.destination,
           reason: t.reason,
+          sourceApp: t.sourceApp,
+          previousTotalPieces: t.previousTotalPieces,
+          clientRequestId: t.clientRequestId,
           resultingTotalPieces: t.resultingTotalPieces,
           createdAt: t.createdAt.toISOString(),
           by: t.userName,
@@ -360,6 +427,9 @@ export function registerReadOnlyTools(server: McpServer): void {
           toWarehouse: t.toWarehouseName,
           destination: t.destination,
           reason: t.reason,
+          sourceApp: t.sourceApp,
+          previousTotalPieces: t.previousTotalPieces,
+          clientRequestId: t.clientRequestId,
           resultingTotalPieces: t.resultingTotalPieces,
           createdAt: t.createdAt.toISOString(),
           by: t.userName,

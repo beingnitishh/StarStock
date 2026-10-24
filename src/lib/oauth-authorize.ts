@@ -1,4 +1,10 @@
-import { getOAuthClient, OAUTH_SCOPE, type OAuthClientRecord } from "./oauth";
+import {
+  clientSupportsWriteScope,
+  getOAuthClient,
+  OAUTH_WRITE_SCOPE,
+  scopeForOAuthClient,
+  type OAuthClientRecord,
+} from "./oauth";
 
 /**
  * Validation shared by the consent page (`GET /oauth/authorize`) and the
@@ -18,6 +24,9 @@ export type AuthorizeQuery = {
   codeChallengeMethod: string;
   scope: string;
   responseType: string;
+  /** Original request flags let consent explain why write was withheld. */
+  writeRequested: boolean;
+  writeEligible: boolean;
 };
 
 export type AuthorizeOutcome =
@@ -38,13 +47,12 @@ function firstValue(value: string | string[] | undefined): string {
   return value ?? "";
 }
 
-/** Scopes we can grant. Anything else the client asks for is dropped. */
-export function grantedScope(requested: string): string {
-  const wanted = requested.split(/\s+/).filter(Boolean);
-  const granted = wanted.filter((s) => s === OAUTH_SCOPE);
-  // StarStock only has a single read scope, so a client that asks for more
-  // (or for nothing) still gets read access — never anything wider.
-  return granted.length > 0 ? granted.join(" ") : OAUTH_SCOPE;
+/**
+ * Read access remains the default. Write scope is granted only when the
+ * client explicitly requests it; unknown scopes are always dropped.
+ */
+export function grantedScope(requested: string, redirectUris?: unknown): string {
+  return scopeForOAuthClient(requested, redirectUris);
 }
 
 export async function parseAuthorizeQuery(
@@ -96,6 +104,9 @@ export async function parseAuthorizeQuery(
     };
   }
 
+  const writeRequested = scope.split(/\s+/).includes(OAUTH_WRITE_SCOPE);
+  const writeEligible = clientSupportsWriteScope(client.redirectUris);
+
   return {
     kind: "ok",
     client,
@@ -105,8 +116,10 @@ export async function parseAuthorizeQuery(
       state,
       codeChallenge,
       codeChallengeMethod,
-      scope: grantedScope(scope),
+      scope: grantedScope(scope, client.redirectUris),
       responseType,
+      writeRequested,
+      writeEligible,
     },
   };
 }

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { EmptyState, TypeChip, TX_META } from "./ui";
 import { fmtDateTime, fmtInt } from "@/lib/units";
 import type { TxRow } from "@/lib/types";
+import { APPLICATION_SOURCE_LABELS } from "@/lib/source-app";
 
 function ChangeCell({ tx }: { tx: TxRow }) {
   const sign = TX_META[tx.type].sign;
@@ -143,7 +144,10 @@ export function TxTable({
                 ) : null}
               </td>
               <td className="whitespace-nowrap px-4 py-3 align-top text-xs text-ink-soft">
-                {tx.userName ?? "—"}
+                <p>{tx.userName ?? "—"}</p>
+                <p className="mt-0.5 text-[10px] text-ink-faint">
+                  via {APPLICATION_SOURCE_LABELS[tx.sourceApp]}
+                </p>
               </td>
               <td className="whitespace-nowrap px-4 py-3 text-right align-top font-mono text-xs font-semibold">
                 {fmtInt(tx.resultingTotalPieces)} pcs

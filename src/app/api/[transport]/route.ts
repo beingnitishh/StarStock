@@ -1,5 +1,6 @@
 import { createMcpHandler, withMcpAuth } from "mcp-handler";
 import { registerReadOnlyTools } from "@/lib/mcp-tools";
+import { registerWriteTools } from "@/lib/mcp-write-tools";
 import { OAUTH_SCOPE, verifyAccessToken } from "@/lib/oauth";
 
 export const dynamic = "force-dynamic";
@@ -16,18 +17,22 @@ export const runtime = "nodejs";
  * `WWW-Authenticate` header points at the protected-resource metadata, which
  * is what ChatGPT and Claude use to start the OAuth dance automatically.
  *
- * Only read-only tools are exposed (see `src/lib/mcp-tools.ts`).
+ * Read tools require starstock.read. Inventory writes additionally require the
+ * opt-in starstock.write scope and a freshly verified inventory-writing user.
  */
 const mcpHandler = createMcpHandler(
   (server) => {
     registerReadOnlyTools(server);
+    registerWriteTools(server);
   },
   {
     serverInfo: { name: "StarStock", version: "1.0.0" },
     instructions:
-      "StarStock is an inventory system. These tools are read-only: use search_products and get_product to look up " +
-      "products and stock levels per warehouse, low_stock to find items running out, list_warehouses for warehouse " +
-      "ids, and list_transactions for stock movement history. Nothing here can change stock.",
+      "StarStock is an inventory system. Use list_products for paginated catalogue browsing, search_products/get_product " +
+      "for lookups, catalogue_summary for totals, low_stock for threshold searches, list_warehouses for warehouse ids, " +
+      "and list_transactions for history. add_product, inbound_stock, and outbound_stock change inventory only when the " +
+      "user has approved starstock.write and their current account role permits writes. For safe retries, provide client_request_id; " +
+      "the same authenticated user's key returns the original result without another change for 24 hours. Never retry a failed write blindly.",
   },
   {
     // The route lives at /api/[transport]; deriving endpoints from /api makes
