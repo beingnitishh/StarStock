@@ -1,4 +1,4 @@
-import { createMcpHandler, withMcpAuth } from "mcp-handler";
+import { createMcpHandler, getPublicOrigin, withMcpAuth } from "mcp-handler";
 import { registerReadOnlyTools } from "@/lib/mcp-tools";
 import { registerWriteTools } from "@/lib/mcp-write-tools";
 import { OAUTH_SCOPE, verifyAccessToken } from "@/lib/oauth";
@@ -47,7 +47,17 @@ const mcpHandler = createMcpHandler(
 
 const handler = withMcpAuth(
   mcpHandler,
-  async (_req, bearerToken) => verifyAccessToken(bearerToken),
+  async (req, bearerToken) => {
+    const verified = await verifyAccessToken(bearerToken);
+    if (!verified) return undefined;
+    return {
+      ...verified,
+      // MCP tool callbacks do not receive the HTTP Request directly. Attach
+      // the trusted proxy-aware public origin to this request's auth context
+      // so URL-producing tools can return links for the current deployment.
+      extra: { ...verified.extra, publicOrigin: getPublicOrigin(req) },
+    };
+  },
   {
     required: true,
     requiredScopes: [OAUTH_SCOPE],

@@ -14,6 +14,10 @@ import {
 } from "@/lib/mcp-idempotency";
 import { errorResult, jsonResult } from "@/lib/mcp-response";
 import { registerProductDetailedInTransaction } from "@/lib/products";
+import {
+  createProductImageUploadTokenInTransaction,
+  ensureProductImageUploadTokensTable,
+} from "@/lib/product-image-upload-tokens";
 import { normalizeApplicationSource } from "@/lib/source-app";
 import { performOperationDetailedInTransaction } from "@/lib/stock";
 import { MAX_STOCK_PIECES, type StockUnit } from "@/lib/units";
@@ -26,6 +30,11 @@ type AddProductInput = {
   openingQty?: number;
   warehouseId: number;
   imageUrl?: string;
+  client_request_id?: string;
+};
+
+type ProductImageUploadInput = {
+  sku: string;
   client_request_id?: string;
 };
 
@@ -85,6 +94,16 @@ const addProductSchema = {
     .max(4_000)
     .optional()
     .describe("Optional validated http(s) or site-relative image URL. MCP does not accept image uploads/data URLs."),
+};
+
+const productImageUploadSchema = {
+  client_request_id: clientRequestIdSchema,
+  sku: z
+    .string()
+    .trim()
+    .min(1)
+    .max(60)
+    .describe("Exact, case-sensitive SKU of the product that needs a photo."),
 };
 
 const movementSchema = {
@@ -178,6 +197,26 @@ function reasonFrom(input: StockMovementInput): string | null {
   return input.reason ?? input.reference ?? null;
 }
 
+function uploadPageOrigin(authInfo: AuthInfo | undefined): string {
+  const fromRequest = authInfo?.extra?.publicOrigin;
+  const configured =
+    process.env.NEXT_PUBLIC_APP_URL ??
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined);
+  const candidate = typeof fromRequest === "string" ? fromRequest : configured;
+  if (!candidate) {
+    throw new HttpError(500, "The public StarStock address could not be determined. Please retry.");
+  }
+  try {
+    const url = new URL(candidate);
+    if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) {
+      throw new Error("Unsupported public origin.");
+    }
+    return url.origin;
+  } catch {
+    throw new HttpError(500, "The public StarStock address could not be determined. Please retry.");
+  }
+}
+
 export async function addProductTool(
   input: AddProductInput,
   authInfo: AuthInfo | undefined,
@@ -260,6 +299,51 @@ export async function addProductTool(
             clientRequestId,
             createdBy: actor(writer),
             transaction,
+          },
+        );
+      },
+    );
+  } catch (error) {
+    return writeFailure(error);
+  }
+}
+
+export async function requestProductImageUploadTool(
+  input: ProductImageUploadInput,
+  authInfo: AuthInfo | undefined,
+): Promise<CallToolResult> {
+  try {
+    const writer = await requireMcpWriter(authInfo);
+    const clientRequestId = input.client_request_id?.trim() ?? null;
+    await ensureProductImageUploadTokensTable();
+
+    return await runMcpWriteWithIdempotency(
+      writer.user.id,
+      input.client_request_id,
+      async (tx) => {
+        const product = await exactProduct(tx, input.sku);
+        if (!product) {
+          throw new HttpError(
+            404,
+            `No product found with exact SKU "${input.sku}". Use search_products to find it.`,
+          );
+        }
+
+        const { token, expiresAt } = await createProductImageUploadTokenInTransaction(
+          tx,
+          product.id,
+          writer.user.id,
+        );
+        const uploadUrl = `${uploadPageOrigin(authInfo)}/upload-image/${token}`;
+        return jsonResult(
+          `Upload the photo for ${product.sku} within 15 minutes using this single-use link: ${uploadUrl}`,
+          {
+            ok: true,
+            product,
+            uploadUrl,
+            expiresAt: expiresAt.toISOString(),
+            expiresInSeconds: 15 * 60,
+            clientRequestId,
           },
         );
       },
@@ -362,7 +446,8 @@ export function registerWriteTools(server: McpServer): void {
       description:
         "Create one product and its opening stock atomically using StarStock's existing product registration path. " +
         "Positive opening stock records an inbound Opening stock transaction. Requires starstock.write and a current Admin, Stock Head, or Stock Boy account. " +
-        "Images are validated URLs only; file/data-URL uploads remain available on the website. " +
+        "Images are validated URLs only; file/data-URL uploads remain available on the website. After creating a product, if the user wants a photo, call request_product_image_upload with its SKU and give them the returned link. " +
+        "That link is single-use, expires in 15 minutes, and must be opened while signed in to the same StarStock account. " +
         "Provide client_request_id for safe retries: the same user's key replays the original result for 24 hours.",
       inputSchema: addProductSchema,
       annotations: {
@@ -373,6 +458,23 @@ export function registerWriteTools(server: McpServer): void {
       },
     },
     async (input, extra) => addProductTool(input, extra.authInfo),
+  );
+
+  server.registerTool(
+    "request_product_image_upload",
+    {
+      title: "Request product image upload",
+      description:
+        "Create a single-use 15-minute upload link for the exact SKU of an existing product. The link only works when opened in a normal StarStock login session for the same user who requested it; the user can then select a photo and save it. Requires starstock.write and a current Admin, Stock Head, or Stock Boy account. Reuse client_request_id for a 24-hour same-user retry to return the original link.",
+      inputSchema: productImageUploadSchema,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
+    },
+    async (input, extra) => requestProductImageUploadTool(input, extra.authInfo),
   );
 
   server.registerTool(

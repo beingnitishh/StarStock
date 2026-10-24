@@ -190,6 +190,19 @@ export const productImages = pgTable("product_images", {
     .defaultNow(),
 });
 
+/** One-time image upload links issued by the MCP write tool. */
+export const productImageUploadTokens = pgTable("product_image_upload_tokens", {
+  tokenHash: text("token_hash").primaryKey(),
+  productId: integer("product_id")
+    .notNull()
+    .references(() => products.id, { onDelete: "cascade" }),
+  userId: integer("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  usedAt: timestamp("used_at", { withTimezone: true }),
+});
+
 export const warehouseStock = pgTable(
   "warehouse_stock",
   {
