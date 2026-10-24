@@ -1,6 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { productImages, products } from "@/db/schema";
+import type { DbTransaction } from "./db-transaction";
 import { HttpError } from "./api";
 import { isStoredImageUrl, parseImageDataUrl, type ParsedImage } from "./images";
 
@@ -89,6 +90,66 @@ export async function saveProductImage(
   const url = storedImageUrl(productId, row?.updatedAt ?? new Date());
   await db.update(products).set({ imageUrl: url }).where(eq(products.id, productId));
   return url;
+}
+
+/** Stores a validated upload inside the caller's transaction. */
+async function saveProductImageInTransaction(
+  tx: DbTransaction,
+  productId: number,
+  parsed: ParsedImage,
+): Promise<string> {
+  const [row] = await tx
+    .insert(productImages)
+    .values({
+      productId,
+      mimeType: parsed.mimeType,
+      data: parsed.base64,
+      updatedAt: new Date(),
+    })
+    .onConflictDoUpdate({
+      target: productImages.productId,
+      set: { mimeType: parsed.mimeType, data: parsed.base64, updatedAt: new Date() },
+    })
+    .returning({ updatedAt: productImages.updatedAt });
+
+  const url = storedImageUrl(productId, row?.updatedAt ?? new Date());
+  await tx.update(products).set({ imageUrl: url }).where(eq(products.id, productId));
+  return url;
+}
+
+/**
+ * Transactional equivalent of `applyProductImage`, used by one-time upload
+ * links so the stored bytes, product URL, and token consumption commit or roll
+ * back together.
+ */
+export async function applyProductImageInTransaction(
+  tx: DbTransaction,
+  productId: number,
+  rawValue: string,
+): Promise<string> {
+  await ensureProductImagesTable();
+  const value = rawValue.trim();
+
+  if (isOwnStoredImageUrl(productId, value)) return value;
+
+  if (!value) {
+    await tx.delete(productImages).where(eq(productImages.productId, productId));
+    return "";
+  }
+
+  if (/^data:/i.test(value)) {
+    const parsed = parseImageDataUrl(value);
+    if (!parsed) {
+      throw new HttpError(
+        400,
+        "That image could not be stored. It may be damaged, unsupported, or larger than 1.5 MB — re-upload it from the product screen.",
+      );
+    }
+    return saveProductImageInTransaction(tx, productId, parsed);
+  }
+
+  await tx.delete(productImages).where(eq(productImages.productId, productId));
+  return value;
 }
 
 /**

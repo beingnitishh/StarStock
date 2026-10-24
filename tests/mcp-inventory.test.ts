@@ -15,6 +15,8 @@ const CHATGPT_CALLBACK = "https://chatgpt.com/connector_platform_oauth_redirect"
 const CLAUDE_CALLBACK = "https://claude.ai/api/mcp/auth_callback";
 const READ_SCOPE = "starstock.read";
 const WRITE_SCOPE = "starstock.read starstock.write";
+const TEST_IMAGE_DATA_URL =
+  "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIxIiBoZWlnaHQ9IjEiPjwvc3ZnPg==";
 
 let embedded: EmbeddedPostgres;
 let control: Client;
@@ -29,6 +31,7 @@ let oauth: typeof import("@/lib/oauth");
 let oauthAuthorize: typeof import("@/lib/oauth-authorize");
 let mcpAuth: typeof import("@/lib/mcp-auth");
 let writeTools: typeof import("@/lib/mcp-write-tools");
+let productImageUploads: typeof import("@/lib/product-image-upload-tokens");
 let mcpPOST: typeof import("@/app/api/[transport]/route").POST;
 
 let legacyProductId = 0;
@@ -83,8 +86,19 @@ beforeAll(async () => {
 
   // Import application modules only after DATABASE_URL points at the isolated
   // cluster. No module ever receives an external/production connection string.
-  [db, pool, schema, catalogue, productsLib, stockLib, oauth, oauthAuthorize, mcpAuth, writeTools] =
-    await Promise.all([
+  [
+    db,
+    pool,
+    schema,
+    catalogue,
+    productsLib,
+    stockLib,
+    oauth,
+    oauthAuthorize,
+    mcpAuth,
+    writeTools,
+    productImageUploads,
+  ] = await Promise.all([
       import("@/db").then((module) => module.db),
       import("@/db").then((module) => module.pool),
       import("@/db/schema"),
@@ -95,6 +109,7 @@ beforeAll(async () => {
       import("@/lib/oauth-authorize"),
       import("@/lib/mcp-auth"),
       import("@/lib/mcp-write-tools"),
+      import("@/lib/product-image-upload-tokens"),
     ]);
   mcpPOST = (await import("@/app/api/[transport]/route")).POST;
 });
@@ -125,6 +140,21 @@ async function createWarehouse(label = "Warehouse") {
     .values({ name: `${label} ${randomUUID().slice(0, 8)}` })
     .returning();
   return rows[0];
+}
+
+async function createImageProduct(sku: string, createdBy = legacyUserId) {
+  return productsLib.registerProduct(
+    {
+      sku,
+      name: `Product ${sku}`,
+      imageUrl: "",
+      stockUnit: "piece",
+      cartonContains: 1,
+      openingQty: 0,
+      warehouseId: legacyWarehouseId,
+    },
+    createdBy,
+  );
 }
 
 async function issueConnection(
@@ -160,6 +190,7 @@ type ToolResult = {
   content?: Array<{ type: string; text: string }>;
   tools?: Array<{
     name: string;
+    description?: string;
     inputSchema?: { properties?: Record<string, unknown>; required?: string[] };
   }>;
 };
@@ -225,6 +256,23 @@ function toolData<T>(response: McpResponse): T {
 
 function toolError(response: McpResponse): string {
   return response.result?.content?.[0]?.text ?? response.error?.message ?? "Missing MCP error";
+}
+
+async function requestImageUploadLink(accessToken: string, sku: string) {
+  const response = await callTool(accessToken, "request_product_image_upload", { sku });
+  expect(response.status).toBe(200);
+  expect(response.result?.isError).not.toBe(true);
+  const data = toolData<{
+    ok: boolean;
+    product: { id: number; sku: string; name: string };
+    uploadUrl: string;
+    expiresAt: string;
+    expiresInSeconds: number;
+  }>(response);
+  const url = new URL(data.uploadUrl);
+  const match = /^\/upload-image\/([A-Za-z0-9_-]+)$/.exec(url.pathname);
+  if (!match) throw new Error(`Unexpected product image upload URL: ${data.uploadUrl}`);
+  return { ...data, token: match[1] };
 }
 
 function contentText(result: CallToolResult, index = 0): string {
@@ -563,6 +611,114 @@ describe("StarStock MCP inventory expansion (isolated PostgreSQL)", () => {
     expect(await productBySku("MCP-IMAGE-UPLOAD")).toBeNull();
   });
 
+  test("product image upload links expire after 15 minutes and store only their SHA-256 hash", async () => {
+    const user = await createUser("stock_head");
+    const connection = await issueConnection(user.id, "chatgpt");
+    const product = await createImageProduct("MCP-IMAGE-EXPIRED");
+    const upload = await requestImageUploadLink(connection.tokens.access_token, product.sku);
+    expect(upload.expiresInSeconds).toBe(15 * 60);
+    expect(new Date(upload.expiresAt).getTime()).toBeGreaterThan(Date.now());
+
+    const tokenHash = productImageUploads.hashProductImageUploadToken(upload.token);
+    const [stored] = await db
+      .select()
+      .from(schema.productImageUploadTokens)
+      .where(eq(schema.productImageUploadTokens.tokenHash, tokenHash));
+    expect(stored).toMatchObject({ tokenHash, productId: product.id, userId: user.id });
+    expect(stored.tokenHash).not.toBe(upload.token);
+
+    await db
+      .update(schema.productImageUploadTokens)
+      .set({ expiresAt: new Date(Date.now() - 1) })
+      .where(eq(schema.productImageUploadTokens.tokenHash, tokenHash));
+    await expect(
+      productImageUploads.consumeProductImageUploadToken(upload.token, user.id, TEST_IMAGE_DATA_URL),
+    ).rejects.toThrow("upload link has expired");
+    const [expired] = await db
+      .select()
+      .from(schema.productImageUploadTokens)
+      .where(eq(schema.productImageUploadTokens.tokenHash, tokenHash));
+    expect(expired.usedAt).toBeNull();
+  });
+
+  test("product image upload links are single use", async () => {
+    const user = await createUser("admin");
+    const connection = await issueConnection(user.id, "claude");
+    const product = await createImageProduct("MCP-IMAGE-ONE-USE");
+    const upload = await requestImageUploadLink(connection.tokens.access_token, product.sku);
+
+    await expect(
+      productImageUploads.consumeProductImageUploadToken(upload.token, user.id, TEST_IMAGE_DATA_URL),
+    ).resolves.toMatchObject({ message: "Image saved", product: { id: product.id } });
+    await expect(
+      productImageUploads.consumeProductImageUploadToken(upload.token, user.id, TEST_IMAGE_DATA_URL),
+    ).rejects.toThrow("upload link has already been used");
+  });
+
+  test("product image upload links reject a different StarStock user without consuming the token", async () => {
+    const owner = await createUser("stock_boy");
+    const connection = await issueConnection(owner.id, "chatgpt");
+    const product = await createImageProduct("MCP-IMAGE-WRONG-USER");
+    const upload = await requestImageUploadLink(connection.tokens.access_token, product.sku);
+    const otherUser = await createUser("admin");
+
+    await expect(
+      productImageUploads.getProductImageUploadDetails(upload.token, otherUser.id),
+    ).rejects.toThrow("different StarStock account");
+    await expect(
+      productImageUploads.consumeProductImageUploadToken(upload.token, otherUser.id, TEST_IMAGE_DATA_URL),
+    ).rejects.toThrow("different StarStock account");
+    const tokenHash = productImageUploads.hashProductImageUploadToken(upload.token);
+    const [stored] = await db
+      .select()
+      .from(schema.productImageUploadTokens)
+      .where(eq(schema.productImageUploadTokens.tokenHash, tokenHash));
+    expect(stored.usedAt).toBeNull();
+  });
+
+  test("a valid product image link shows the product and saves the compressed image", async () => {
+    const user = await createUser("stock_head");
+    const connection = await issueConnection(user.id, "claude");
+    const product = await createImageProduct("MCP-IMAGE-SUCCESS");
+    const upload = await requestImageUploadLink(connection.tokens.access_token, product.sku);
+
+    await expect(
+      productImageUploads.getProductImageUploadDetails(upload.token, user.id),
+    ).resolves.toMatchObject({ id: product.id, sku: product.sku, name: product.name });
+    const result = await productImageUploads.consumeProductImageUploadToken(
+      upload.token,
+      user.id,
+      TEST_IMAGE_DATA_URL,
+    );
+    expect(result).toMatchObject({
+      message: "Image saved",
+      product: { id: product.id, sku: product.sku },
+    });
+    expect(result.imageUrl).toMatch(new RegExp(`^/api/products/${product.id}/image\\?v=\\d+$`));
+
+    const [storedImage] = await db
+      .select()
+      .from(schema.productImages)
+      .where(eq(schema.productImages.productId, product.id));
+    expect(storedImage).toMatchObject({ mimeType: "image/svg+xml" });
+    expect(storedImage.data).toBe(TEST_IMAGE_DATA_URL.split(",")[1]);
+    const [storedProduct] = await db
+      .select({ imageUrl: schema.products.imageUrl })
+      .from(schema.products)
+      .where(eq(schema.products.id, product.id));
+    expect(storedProduct.imageUrl).toBe(result.imageUrl);
+    const [storedToken] = await db
+      .select()
+      .from(schema.productImageUploadTokens)
+      .where(
+        eq(
+          schema.productImageUploadTokens.tokenHash,
+          productImageUploads.hashProductImageUploadToken(upload.token),
+        ),
+      );
+    expect(storedToken.usedAt).toBeInstanceOf(Date);
+  });
+
   test("a transaction-insert database error rolls back stock and never returns success", async () => {
     const product = await productsLib.registerProduct(
       {
@@ -864,6 +1020,13 @@ describe("StarStock MCP inventory expansion (isolated PostgreSQL)", () => {
     expect(denied.isError).toBe(true);
     expect(contentText(denied)).toContain("read-only");
     expect(await productBySku("ROLE-MEMBER-DENIED")).toBeNull();
+    const deniedUpload = await callTool(
+      memberConnection.tokens.access_token,
+      "request_product_image_upload",
+      { sku: "ROLE-MEMBER-DENIED" },
+    );
+    expect(deniedUpload.result?.isError).toBe(true);
+    expect(toolError(deniedUpload)).toContain("read-only");
     const read = await callTool(memberConnection.tokens.access_token, "catalogue_summary");
     expect(read.result?.isError).not.toBe(true);
   });
@@ -1025,6 +1188,11 @@ describe("StarStock MCP inventory expansion (isolated PostgreSQL)", () => {
     });
     expect(denied.result?.isError).toBe(true);
     expect(toolError(denied)).toContain("starstock.write");
+    const deniedUpload = await callTool(connection.tokens.access_token, "request_product_image_upload", {
+      sku: "MCP-ADD-CTN",
+    });
+    expect(deniedUpload.result?.isError).toBe(true);
+    expect(toolError(deniedUpload)).toContain("starstock.write");
 
     const rotated = await oauth.rotateRefreshToken(
       connection.tokens.refresh_token,
@@ -1050,6 +1218,7 @@ describe("StarStock MCP inventory expansion (isolated PostgreSQL)", () => {
       "list_products",
       "catalogue_summary",
       "add_product",
+      "request_product_image_upload",
       "inbound_stock",
       "outbound_stock",
     ];
@@ -1058,11 +1227,19 @@ describe("StarStock MCP inventory expansion (isolated PostgreSQL)", () => {
       const listed = await callMcp(token, "tools/list");
       expect(listed.status).toBe(200);
       expect(listed.result?.tools?.map((tool) => tool.name).sort()).toEqual([...toolNames].sort());
-      for (const writeTool of ["add_product", "inbound_stock", "outbound_stock"]) {
+      for (const writeTool of [
+        "add_product",
+        "request_product_image_upload",
+        "inbound_stock",
+        "outbound_stock",
+      ]) {
         const registered = listed.result?.tools?.find((tool) => tool.name === writeTool);
         expect(registered?.inputSchema?.properties).toHaveProperty("client_request_id");
         expect(registered?.inputSchema?.required ?? []).not.toContain("client_request_id");
       }
+      const addProduct = listed.result?.tools?.find((tool) => tool.name === "add_product");
+      expect(addProduct?.description).toContain("request_product_image_upload");
+      expect(addProduct?.description).toContain("give them the returned link");
 
       const search = toolData<{ products: Array<Record<string, unknown>> }>(
         await callTool(token, "search_products", { query: "PAGE-02" }),

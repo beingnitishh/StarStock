@@ -8,6 +8,8 @@ import type { NextConfig } from "next";
 const noFramingHeaders = [
   { key: "Content-Security-Policy", value: "frame-ancestors 'none'" },
   { key: "X-Frame-Options", value: "DENY" },
+  // Upload URLs contain bearer tokens; never send them as referrers to assets.
+  { key: "Referrer-Policy", value: "no-referrer" },
 ];
 
 const nextConfig: NextConfig = {
@@ -15,6 +17,7 @@ const nextConfig: NextConfig = {
     return [
       { source: "/oauth/:path*", headers: noFramingHeaders },
       { source: "/login", headers: noFramingHeaders },
+      { source: "/upload-image/:path*", headers: noFramingHeaders },
     ];
   },
 };
