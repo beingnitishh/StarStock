@@ -463,6 +463,100 @@ describe("StarStock MCP inventory expansion (isolated PostgreSQL)", () => {
     expect(last).toMatchObject({ count: 2, hasMore: false, nextOffset: null });
   });
 
+  test("multi-select warehouseIds put opening stock in exactly the chosen warehouses", async () => {
+    const north = await createWarehouse("Multi North");
+    const south = await createWarehouse("Multi South");
+    const east = await createWarehouse("Multi East");
+
+    // Pick only two of the three warehouses, intentionally unsorted — the
+    // unselected warehouse must stay empty and ordering is normalised.
+    const product = await productsLib.registerProduct(
+      {
+        sku: "MULTI-01",
+        name: "Multi-warehouse listing",
+        imageUrl: "",
+        stockUnit: "piece",
+        cartonContains: 1,
+        openingQty: 5,
+        warehouseIds: [east.id, north.id],
+      },
+      legacyUserId,
+    );
+
+    expect(await stockValue(product.id, north.id)).toBe(5);
+    expect(await stockValue(product.id, east.id)).toBe(5);
+    expect(await stockValue(product.id, south.id)).toBe(0);
+
+    const stored = await productBySku("MULTI-01");
+    expect(stored?.openingStockPieces).toBe(10);
+
+    const txs = await transactionRows(product.id);
+    expect(txs).toHaveLength(2);
+    expect(
+      txs.every((tx) => tx.type === "inbound" && tx.reason === "Opening stock"),
+    ).toBe(true);
+    // Deterministic warehouse-id order with running totals across warehouses.
+    expect(txs.map((tx) => tx.warehouse_id)).toEqual([north.id, east.id]);
+    expect(txs.map((tx) => tx.previous_total_pieces)).toEqual([0, 5]);
+    expect(txs.map((tx) => tx.resulting_total_pieces)).toEqual([5, 10]);
+
+    // Zero opening stock still creates stock rows in every chosen warehouse
+    // but invents no zero-quantity transaction.
+    const zero = await productsLib.registerProduct(
+      {
+        sku: "MULTI-02",
+        name: "Zero multi-warehouse listing",
+        imageUrl: "",
+        stockUnit: "piece",
+        cartonContains: 1,
+        openingQty: 0,
+        warehouseIds: [north.id, south.id],
+      },
+      legacyUserId,
+    );
+    expect(await stockValue(zero.id, north.id)).toBe(0);
+    expect(await stockValue(zero.id, south.id)).toBe(0);
+    expect(await transactionRows(zero.id)).toHaveLength(0);
+
+    // An unknown warehouse id rejects the whole registration atomically.
+    await expect(
+      productsLib.registerProduct(
+        {
+          sku: "MULTI-03",
+          name: "Bad warehouse listing",
+          imageUrl: "",
+          stockUnit: "piece",
+          cartonContains: 1,
+          openingQty: 1,
+          warehouseIds: [north.id, 999_999],
+        },
+        legacyUserId,
+      ),
+    ).rejects.toThrow("do not exist");
+    expect(await productBySku("MULTI-03")).toBeNull();
+
+    // An empty selection is rejected rather than silently defaulting.
+    await expect(
+      productsLib.registerProduct(
+        {
+          sku: "MULTI-04",
+          name: "No warehouse listing",
+          imageUrl: "",
+          stockUnit: "piece",
+          cartonContains: 1,
+          openingQty: 1,
+          warehouseIds: [],
+        },
+        legacyUserId,
+      ),
+    ).rejects.toThrow("Select at least one warehouse");
+
+    // The normalizer dedupes, sorts, drops junk and falls back for non-arrays.
+    expect(productsLib.normalizeWarehouseIds([3, 1, 3, "2", -7, "x"])).toEqual([1, 2, 3]);
+    expect(productsLib.normalizeWarehouseIds("ALL")).toBeNull();
+    expect(productsLib.normalizeWarehouseIds(undefined)).toBeNull();
+  });
+
   test("ChatGPT add_product commits opening stock, exact audit fields, and rejects duplicate SKU", async () => {
     const user = await createUser("admin");
     const connection = await issueConnection(user.id, "chatgpt");
