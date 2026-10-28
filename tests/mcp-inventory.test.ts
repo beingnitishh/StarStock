@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import EmbeddedPostgres from "embedded-postgres";
 import { Client } from "pg";
 import { eq } from "drizzle-orm";
@@ -206,6 +206,7 @@ async function callMcp(
   token: string | null,
   method: string,
   params: Record<string, unknown> = {},
+  extraHeaders: Record<string, string> = {},
 ): Promise<McpResponse> {
   const id = ++requestId;
   const response = await mcpPOST(
@@ -216,6 +217,7 @@ async function callMcp(
         accept: "application/json, text/event-stream",
         "mcp-protocol-version": "2025-06-18",
         ...(token ? { authorization: `Bearer ${token}` } : {}),
+        ...extraHeaders,
       },
       body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
     }),
@@ -1297,6 +1299,201 @@ describe("StarStock MCP inventory expansion (isolated PostgreSQL)", () => {
     expect(auth.scopes).toEqual([READ_SCOPE]);
     expect(auth.extra?.sourceApp).toBe("chatgpt");
     await expect(mcpAuth.requireMcpWriter(auth)).rejects.toThrow("starstock.write");
+  });
+
+  test("MCP OAuth discovery and stateless routing remain available", async () => {
+    const route = await import("@/app/api/[transport]/route");
+    const resourceMetadata = await import("@/app/.well-known/oauth-protected-resource/route");
+    const pathMetadata = await import("@/app/.well-known/oauth-protected-resource/[...path]/route");
+    const authorizationMetadata = await import("@/app/.well-known/oauth-authorization-server/route");
+    const origin = "https://inventory.example.test";
+    const forwarded = { "x-forwarded-host": "inventory.example.test", "x-forwarded-proto": "https" };
+    const context = { params: Promise.resolve({ transport: "mcp" }) };
+    const user = await createUser("member");
+    const connection = await issueConnection(user.id, "chatgpt", READ_SCOPE);
+    const authorized = { ...forwarded, authorization: `Bearer ${connection.tokens.access_token}` };
+
+    for (const method of ["GET", "DELETE"] as const) {
+      const request = (headers: Record<string, string>) =>
+        new Request("http://internal.test/api/mcp", { method, headers });
+      const missing = await route[method](request(forwarded), context);
+      expect(missing.status).toBe(401);
+      expect(missing.headers.get("www-authenticate")).toContain(
+        `${origin}/.well-known/oauth-protected-resource`,
+      );
+      const response = await route[method](request(authorized), context);
+      expect(response.status).toBe(405);
+      expect(response.headers.get("allow")).toBe("POST");
+    }
+
+    for (const transport of ["sse", "message", "other"]) {
+      const url = `http://internal.test/api/${transport}`;
+      const request = (headers: Record<string, string>) =>
+        new Request(url, { method: "POST", headers, body: "{}" });
+      const ctx = { params: Promise.resolve({ transport }) };
+      expect((await route.POST(request(forwarded), ctx)).status).toBe(401);
+      const response = await route.POST(request(authorized), ctx);
+      expect(response.status).toBe(404);
+      expect(await response.text()).toBe("Not found");
+    }
+
+    const metadataRequest = (path: string) => new Request(`http://internal.test${path}`, { headers: forwarded });
+    for (const response of [
+      await resourceMetadata.GET(metadataRequest("/.well-known/oauth-protected-resource")),
+      await pathMetadata.GET(metadataRequest("/.well-known/oauth-protected-resource/api/mcp")),
+    ]) {
+      expect(await response.json()).toMatchObject({
+        resource: `${origin}/api/mcp`,
+        authorization_servers: [origin],
+        scopes_supported: [READ_SCOPE, "starstock.write"],
+      });
+    }
+    const serverMetadata = await authorizationMetadata.GET(
+      metadataRequest("/.well-known/oauth-authorization-server"),
+    );
+    expect(await serverMetadata.json()).toMatchObject({
+      issuer: origin,
+      authorization_endpoint: `${origin}/oauth/authorize`,
+      token_endpoint: `${origin}/api/oauth/token`,
+      registration_endpoint: `${origin}/api/oauth/register`,
+      code_challenge_methods_supported: ["S256"],
+    });
+  });
+
+  test("OAuth authorization code and refresh bearer tokens work with MCP tools", async () => {
+    const registration = await import("@/app/api/oauth/register/route");
+    const authorization = await import("@/app/api/oauth/authorize/route");
+    const tokenEndpoint = await import("@/app/api/oauth/token/route");
+    const session = await import("@/lib/auth");
+    const user = await createUser("admin");
+    const registered = await registration.POST(new Request("http://starstock.test/api/oauth/register", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ client_name: "ChatGPT", redirect_uris: [CHATGPT_CALLBACK] }),
+    }));
+    expect(registered.status).toBe(201);
+    const { client_id: clientId } = await registered.json() as { client_id: string };
+    expect(clientId).toBeTruthy();
+
+    const verifier = randomBytes(32).toString("base64url");
+    const challenge = createHash("sha256").update(verifier).digest("base64url");
+    const getSessionUser = vi.spyOn(session, "getSessionUser").mockResolvedValue({
+      id: user.id, username: user.username, displayName: user.displayName, role: "admin",
+    });
+    let consent: Response;
+    try {
+      consent = await authorization.POST(new Request("http://starstock.test/api/oauth/authorize", {
+        method: "POST",
+        body: new URLSearchParams({
+          client_id: clientId,
+          redirect_uri: CHATGPT_CALLBACK,
+          response_type: "code",
+          code_challenge: challenge,
+          code_challenge_method: "S256",
+          scope: WRITE_SCOPE,
+          state: "test-state",
+          decision: "allow",
+        }),
+      }));
+    } finally {
+      getSessionUser.mockRestore();
+    }
+    expect(consent.status).toBe(303);
+    const redirect = new URL(consent.headers.get("location")!);
+    expect(redirect.searchParams.get("state")).toBe("test-state");
+    const code = redirect.searchParams.get("code");
+    expect(code).toBeTruthy();
+
+    const exchange = () => tokenEndpoint.POST(new Request("http://starstock.test/api/oauth/token", {
+      method: "POST",
+      body: new URLSearchParams({
+        grant_type: "authorization_code", client_id: clientId, code: code!,
+        redirect_uri: CHATGPT_CALLBACK, code_verifier: verifier,
+      }),
+    }));
+    const tokenResponse = await exchange();
+    expect(tokenResponse.status).toBe(200);
+    const tokens = await tokenResponse.json() as {
+      access_token: string; refresh_token: string; token_type: string; scope: string;
+    };
+    expect(tokens).toMatchObject({ token_type: "Bearer", scope: WRITE_SCOPE });
+    expect((await exchange()).status).toBe(400);
+
+    const initialized = await callMcp(tokens.access_token, "initialize", {
+      protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test-client", version: "1" },
+    });
+    expect(initialized.status).toBe(200);
+    expect(initialized.result).toMatchObject({
+      protocolVersion: "2025-06-18", serverInfo: { name: "StarStock", version: "1.0.0" },
+    });
+    const listed = await callMcp(tokens.access_token, "tools/list");
+    expect(listed.result?.tools?.map((tool) => tool.name)).toContain("add_product");
+    const warehouses = await callTool(tokens.access_token, "list_warehouses");
+    expect(warehouses.status).toBe(200);
+    expect(toolData<{ warehouses: unknown[] }>(warehouses).warehouses.length).toBeGreaterThan(0);
+
+    const sku = `OAUTH-FLOW-${randomUUID().slice(0, 8)}`;
+    const created = await callTool(tokens.access_token, "add_product", {
+      sku, cartonContains: 1, openingQty: 2, warehouseId: legacyWarehouseId,
+    });
+    expect(created.status).toBe(200);
+    expect(created.result?.isError).not.toBe(true);
+    const product = await productBySku(sku);
+    expect(product).not.toBeNull();
+    expect((await transactionRows(product!.id))[0]).toMatchObject({ user_id: user.id, source_app: "chatgpt" });
+
+    const upload = await callMcp(tokens.access_token, "tools/call", {
+      name: "request_product_image_upload", arguments: { sku },
+    }, { "x-forwarded-host": "inventory.example.test", "x-forwarded-proto": "https" });
+    expect(upload.result?.isError).not.toBe(true);
+    expect(new URL(toolData<{ uploadUrl: string }>(upload).uploadUrl).origin).toBe("https://inventory.example.test");
+
+    const modernMeta = {
+      "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+      "io.modelcontextprotocol/clientCapabilities": {},
+      "io.modelcontextprotocol/clientInfo": { name: "test-client", version: "1" },
+    };
+    const modernWrite = await callMcp(tokens.access_token, "tools/call", {
+      _meta: modernMeta,
+      name: "inbound_stock",
+      arguments: { sku, quantity: 1, unit: "piece", warehouseId: legacyWarehouseId },
+    }, {
+      "mcp-protocol-version": "2026-07-28", "mcp-method": "tools/call", "mcp-name": "inbound_stock",
+    });
+    expect(modernWrite.status).toBe(200);
+    expect(modernWrite.error).toBeUndefined();
+    expect(modernWrite.result?.isError).not.toBe(true);
+    expect(await stockValue(product!.id, legacyWarehouseId)).toBe(3);
+
+    const subscription = await mcpPOST(new Request("http://starstock.test/api/mcp", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json", accept: "application/json, text/event-stream",
+        authorization: `Bearer ${tokens.access_token}`,
+        "mcp-protocol-version": "2026-07-28", "mcp-method": "subscriptions/listen",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0", id: 1, method: "subscriptions/listen", params: { _meta: modernMeta, notifications: {} },
+      }),
+    }), { params: Promise.resolve({ transport: "mcp" }) });
+    if (subscription.headers.get("content-type")?.includes("text/event-stream")) {
+      await subscription.body?.cancel();
+      throw new Error("The stateless MCP endpoint unexpectedly opened a subscription stream.");
+    }
+    expect((await subscription.json()).error.message).toBe("Subscription limit reached");
+
+    const refresh = () => tokenEndpoint.POST(new Request("http://starstock.test/api/oauth/token", {
+      method: "POST",
+      body: new URLSearchParams({ grant_type: "refresh_token", client_id: clientId, refresh_token: tokens.refresh_token }),
+    }));
+    const refreshed = await refresh();
+    expect(refreshed.status).toBe(200);
+    const refreshedTokens = await refreshed.json() as { access_token: string; scope: string };
+    expect(refreshedTokens.scope).toBe(WRITE_SCOPE);
+    const refreshedRead = await callTool(refreshedTokens.access_token, "catalogue_summary");
+    expect(refreshedRead.status).toBe(200);
+    expect(toolData<{ totalProducts: number }>(refreshedRead).totalProducts).toBeGreaterThan(0);
+    expect((await refresh()).status).toBe(400);
   });
 
   test("all existing read tools and new reads work for both ChatGPT and Claude read connections", async () => {
