@@ -1,5 +1,5 @@
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
@@ -457,7 +457,7 @@ export function registerWriteTools(server: McpServer): void {
         openWorldHint: false,
       },
     },
-    async (input, extra) => addProductTool(input, extra.authInfo),
+    async (input, ctx) => addProductTool(input, ctx.http?.authInfo),
   );
 
   server.registerTool(
@@ -474,7 +474,7 @@ export function registerWriteTools(server: McpServer): void {
         openWorldHint: false,
       },
     },
-    async (input, extra) => requestProductImageUploadTool(input, extra.authInfo),
+    async (input, ctx) => requestProductImageUploadTool(input, ctx.http?.authInfo),
   );
 
   server.registerTool(
@@ -493,7 +493,7 @@ export function registerWriteTools(server: McpServer): void {
         openWorldHint: false,
       },
     },
-    async (input, extra) => inboundStockTool(input, extra.authInfo),
+    async (input, ctx) => inboundStockTool(input, ctx.http?.authInfo),
   );
 
   server.registerTool(
@@ -512,6 +512,6 @@ export function registerWriteTools(server: McpServer): void {
         openWorldHint: false,
       },
     },
-    async (input, extra) => outboundStockTool(input, extra.authInfo),
+    async (input, ctx) => outboundStockTool(input, ctx.http?.authInfo),
   );
 }

@@ -33,20 +33,20 @@ const mcpHandler = createMcpHandler(
       "and list_transactions for history. add_product, inbound_stock, and outbound_stock change inventory only when the " +
       "user has approved starstock.write and their current account role permits writes. For safe retries, provide client_request_id; " +
       "the same authenticated user's key returns the original result without another change for 24 hours. Never retry a failed write blindly.",
-  },
-  {
-    // The route lives at /api/[transport]; deriving endpoints from /api makes
-    // the Streamable HTTP endpoint /api/mcp (/api/sse and /api/message are
-    // disabled — SSE is deprecated in the current MCP spec).
-    basePath: "/api",
-    disableSse: true,
-    maxDuration: 60,
-    verboseLogs: false,
+    // The endpoint has always been stateless, with no long-lived SSE streams.
+    maxSubscriptions: 0,
   },
 );
 
 const handler = withMcpAuth(
-  mcpHandler,
+  (req) => {
+    // The handler no longer routes by pathname. Keep the existing /api/mcp
+    // endpoint and leave the legacy /api/sse and /api/message paths disabled.
+    if (new URL(req.url).pathname !== "/api/mcp") {
+      return new Response("Not found", { status: 404 });
+    }
+    return mcpHandler(req);
+  },
   async (req, bearerToken) => {
     const verified = await verifyAccessToken(bearerToken);
     if (!verified) return undefined;
