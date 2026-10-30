@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { Icon } from "@/components/icons";
 import { useCanWrite } from "@/components/session";
+import { AddProductWarehousesModal } from "@/components/AddProductWarehousesModal";
 import { ProductFormModal } from "@/components/ProductFormModal";
 import { StockOpModal } from "@/components/StockOpModal";
 import { TxTable } from "@/components/TxTable";
@@ -39,6 +40,7 @@ export default function ProductPage() {
 
   const [opType, setOpType] = useState<OpType>("inbound");
   const [opOpen, setOpOpen] = useState(false);
+  const [addWarehousesOpen, setAddWarehousesOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -47,7 +49,7 @@ export default function ProductPage() {
     try {
       const [pRes, wRes] = await Promise.all([
         fetch(`/api/products/${id}`, { cache: "no-store" }),
-        fetch("/api/warehouses"),
+        fetch("/api/warehouses", { cache: "no-store" }),
       ]);
       if (pRes.status === 404) {
         setNotFound(true);
@@ -131,6 +133,9 @@ export default function ProductPage() {
 
   const totalCtn = splitCartons(product.totalPieces, product.cartonContains);
   const hasStock = product.totalPieces > 0;
+  const listedWarehouseIds = new Set(product.stocks.map((s) => s.warehouseId));
+  const unlistedWarehouses = warehouses.filter((w) => !listedWarehouseIds.has(w.id));
+  const alreadyInAllWarehouses = warehouses.length > 0 && unlistedWarehouses.length === 0;
 
   const remove = async () => {
     const target = product;
@@ -331,6 +336,29 @@ export default function ProductPage() {
             </tfoot>
           </table>
           </div>
+          {canWrite ? (
+            <div className="border-t border-line p-3 sm:px-5 sm:py-3.5">
+              <Button
+                size="sm"
+                variant="secondary"
+                icon={alreadyInAllWarehouses ? "check-circle" : "plus"}
+                disabled={alreadyInAllWarehouses || warehouses.length === 0}
+                title={
+                  warehouses.length === 0
+                    ? "Create a warehouse first"
+                    : alreadyInAllWarehouses
+                      ? "This product is already listed in every warehouse"
+                      : "Add product to another warehouse"
+                }
+                onClick={() => setAddWarehousesOpen(true)}
+                className="w-full"
+              >
+                {alreadyInAllWarehouses
+                  ? "Already in all warehouses"
+                  : "Add product to another warehouse"}
+              </Button>
+            </div>
+          ) : null}
         </div>
 
         {/* History */}
@@ -373,6 +401,13 @@ export default function ProductPage() {
             initialType={opType}
             initialProductId={product.id}
             onTypeChange={setOpType}
+          />
+          <AddProductWarehousesModal
+            open={addWarehousesOpen}
+            onClose={() => setAddWarehousesOpen(false)}
+            onDone={load}
+            product={product}
+            warehouses={warehouses}
           />
           <ProductFormModal
             open={editOpen}

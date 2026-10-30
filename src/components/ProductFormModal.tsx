@@ -27,7 +27,7 @@ export function ProductFormModal({
   const [stockUnit, setStockUnit] = useState<"piece" | "carton">("piece");
   const [cartonContains, setCartonContains] = useState("1");
   const [openingQty, setOpeningQty] = useState("0");
-  const [warehouseIds, setWarehouseIds] = useState<number[]>([]);
+  const [warehouseId, setWarehouseId] = useState("");
   const [busy, setBusy] = useState(false);
   const [imageBusy, setImageBusy] = useState(false);
   const [imageTouched, setImageTouched] = useState(false);
@@ -43,8 +43,8 @@ export function ProductFormModal({
     setStockUnit(editing?.stockUnit ?? "piece");
     setCartonContains(String(editing?.cartonContains ?? 1));
     setOpeningQty("0");
-    // No default — user must explicitly pick one or more warehouses
-    setWarehouseIds([]);
+    // No default — user must explicitly choose a warehouse (or All Warehouses)
+    setWarehouseId("");
     setError(null);
     setBusy(false);
     setImageBusy(false);
@@ -97,8 +97,8 @@ export function ProductFormModal({
         if (!res.ok) throw new Error(data.error ?? "Update failed.");
         toast.push("success", "Product updated", `${sku} saved.`);
       } else {
-        if (warehouseIds.length === 0) {
-          throw new Error("Select at least one warehouse where the opening stock is stored.");
+        if (!warehouseId) {
+          throw new Error("Select the warehouse where the opening stock is stored.");
         }
         const res = await fetch("/api/products", {
           method: "POST",
@@ -110,8 +110,7 @@ export function ProductFormModal({
             stockUnit,
             cartonContains: Number(cartonContains),
             openingQty: Number(openingQty || 0),
-            // Every selected warehouse receives the opening stock.
-            warehouseIds,
+            warehouseId: warehouseId === "ALL" ? "ALL" : Number(warehouseId),
           }),
         });
         const data = await res.json();
@@ -233,27 +232,21 @@ export function ProductFormModal({
                 className="font-mono"
               />
             </Field>
-            <Field
-              label="Opening stock warehouse"
-              required
-              hint={
-                warehouses.length > 0 && warehouseIds.length === warehouses.length
-                  ? "all warehouses"
-                  : warehouseIds.length > 0
-                    ? `${warehouseIds.length} of ${warehouses.length} selected`
-                    : undefined
-              }
-            >
-              <WarehouseMultiSelect
-                warehouses={warehouses}
-                selected={warehouseIds}
-                onChange={setWarehouseIds}
-                disabled={busy}
-              />
-              {warehouseIds.length > 0 ? (
+            <Field label="Opening stock warehouse" required hint={warehouseId === "ALL" ? "all warehouses" : undefined}>
+              <Select value={warehouseId} onChange={(e) => setWarehouseId(e.target.value)}>
+                <option value="" disabled>
+                  Select warehouse
+                </option>
+                {warehouses.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.name}
+                  </option>
+                ))}
+                {warehouses.length > 0 ? <option value="ALL">All Warehouses</option> : null}
+              </Select>
+              {warehouseId === "ALL" ? (
                 <p className="mt-1 text-[11px] font-medium text-brand">
-                  Will create opening stock in {warehouseIds.length} warehouse
-                  {warehouseIds.length === 1 ? "" : "s"}.
+                  Will create stock in all {warehouses.length} warehouse{warehouses.length === 1 ? "" : "s"}.
                 </p>
               ) : null}
             </Field>
@@ -283,167 +276,5 @@ export function ProductFormModal({
         </div>
       </div>
     </Modal>
-  );
-}
-
-/* ----------------------- Multi-select warehouse picker ---------------------- */
-
-function CheckboxMark({
-  checked,
-  indeterminate = false,
-}: {
-  checked: boolean;
-  indeterminate?: boolean;
-}) {
-  return (
-    <span
-      aria-hidden
-      className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-[5px] border transition-colors ${
-        checked || indeterminate
-          ? "border-brand bg-brand text-paper"
-          : "border-line-strong bg-card"
-      }`}
-    >
-      {indeterminate ? (
-        <span className="h-0.5 w-2 rounded-full bg-paper" />
-      ) : checked ? (
-        <Icon name="check" className="h-3 w-3" strokeWidth={3} />
-      ) : null}
-    </span>
-  );
-}
-
-/**
- * Dropdown with tick boxes so a product can be listed in any subset of
- * warehouses — "All Warehouses" stays pinned on top and ticks/unticks every
- * warehouse in one click. Each selected warehouse receives the opening stock.
- */
-function WarehouseMultiSelect({
-  warehouses,
-  selected,
-  onChange,
-  disabled = false,
-}: {
-  warehouses: Warehouse[];
-  selected: number[];
-  onChange: (ids: number[]) => void;
-  disabled?: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-
-  const total = warehouses.length;
-  const selectedSet = new Set(selected);
-  const allSelected = total > 0 && selected.length === total;
-  const someSelected = selected.length > 0 && !allSelected;
-
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (event: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", onPointerDown);
-    return () => document.removeEventListener("mousedown", onPointerDown);
-  }, [open]);
-
-  function toggleAll() {
-    // Ticking "All Warehouses" selects every warehouse; ticking it again
-    // clears the selection so the user can start from scratch.
-    onChange(allSelected ? [] : warehouses.map((w) => w.id));
-  }
-
-  function toggleOne(id: number) {
-    onChange(
-      selectedSet.has(id) ? selected.filter((x) => x !== id) : [...selected, id],
-    );
-  }
-
-  let triggerLabel: string;
-  if (selected.length === 0) {
-    triggerLabel = "Select warehouse";
-  } else if (allSelected) {
-    triggerLabel = "All Warehouses";
-  } else if (selected.length === 1) {
-    triggerLabel = warehouses.find((w) => w.id === selected[0])?.name ?? "1 warehouse selected";
-  } else {
-    triggerLabel = `${selected.length} warehouses selected`;
-  }
-
-  return (
-    <div
-      ref={rootRef}
-      className="relative"
-      onKeyDown={(e) => {
-        // Escape closes only the dropdown — stop it from closing the modal.
-        if (e.key === "Escape" && open) {
-          e.stopPropagation();
-          setOpen(false);
-        }
-      }}
-    >
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => setOpen((v) => !v)}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        className="flex w-full items-center justify-between gap-2 rounded-lg border border-line-strong bg-card px-3 py-2 text-left text-sm text-ink outline-none motion-field focus:border-brand focus:ring-2 focus:ring-brand-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        <span className={`truncate ${selected.length === 0 ? "text-ink-faint" : ""}`}>
-          {triggerLabel}
-        </span>
-        <Icon
-          name="chevron-down"
-          className={`h-3.5 w-3.5 shrink-0 text-ink-faint transition-transform ${open ? "rotate-180" : ""}`}
-        />
-      </button>
-
-      {open ? (
-        <div
-          role="listbox"
-          aria-multiselectable="true"
-          className="absolute z-20 mt-1 w-full overflow-hidden rounded-lg border border-line-strong bg-card shadow-lg shadow-coal/15"
-        >
-          <button
-            type="button"
-            role="option"
-            aria-selected={allSelected}
-            disabled={total === 0}
-            onClick={toggleAll}
-            className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm font-semibold text-ink hover:bg-brand-soft/40 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <CheckboxMark checked={allSelected} indeterminate={someSelected} />
-            All Warehouses
-          </button>
-          <div className="border-t border-line" />
-          {total === 0 ? (
-            <p className="px-3 py-2.5 text-xs text-ink-faint">
-              No warehouses yet — create a warehouse first.
-            </p>
-          ) : (
-            <div className="max-h-56 overflow-y-auto">
-              {warehouses.map((w) => {
-                const checked = selectedSet.has(w.id);
-                return (
-                  <button
-                    key={w.id}
-                    type="button"
-                    role="option"
-                    aria-selected={checked}
-                    onClick={() => toggleOne(w.id)}
-                    className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-ink hover:bg-brand-soft/40"
-                  >
-                    <CheckboxMark checked={checked} />
-                    <span className="truncate">{w.name}</span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      ) : null}
-    </div>
   );
 }
