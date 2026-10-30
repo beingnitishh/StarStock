@@ -1,4 +1,4 @@
-import { asc, eq, inArray } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { products, warehouses } from "@/db/schema";
 import {
@@ -13,7 +13,7 @@ import {
 import { checkImageUrl } from "@/lib/images";
 import { applyProductImage } from "@/lib/product-images";
 import { fetchProductRows } from "@/lib/query";
-import { normalizeWarehouseIds, registerProduct } from "@/lib/products";
+import { registerProduct } from "@/lib/products";
 
 export const dynamic = "force-dynamic";
 
@@ -57,10 +57,8 @@ export async function POST(req: Request) {
       throw new HttpError(409, `A product with SKU "${sku}" already exists.`);
     }
 
-    // Opening stock warehouses are required — no default. The listing form
-    // sends a multi-select array; legacy callers send a single warehouse id or
-    // the sentinel "ALL" for all warehouses.
-    const warehouseIds = normalizeWarehouseIds(body.warehouseIds);
+    // Opening stock warehouse is required — no default. Supports single
+    // warehouse id or the sentinel "ALL" for all warehouses.
     const rawWarehouse = body.warehouseId ?? body.warehouse ?? body.openingStockWarehouse;
     let warehouseId: number | "ALL" | null = null;
     if (typeof rawWarehouse === "string" && rawWarehouse.trim().toLowerCase() === "all") {
@@ -74,20 +72,11 @@ export async function POST(req: Request) {
       if (Number.isInteger(n) && n > 0) warehouseId = n;
     }
 
-    if (warehouseIds && warehouseIds.length > 0) {
-      const rows = await db
-        .select({ id: warehouses.id })
-        .from(warehouses)
-        .where(inArray(warehouses.id, warehouseIds));
-      if (rows.length !== warehouseIds.length) {
-        throw new HttpError(400, "One or more selected warehouses do not exist.");
-      }
-    } else if (warehouseId === null) {
-      throw new HttpError(
-        400,
-        "Select at least one warehouse where the opening stock is stored.",
-      );
-    } else if (warehouseId === "ALL") {
+    if (warehouseId === null) {
+      throw new HttpError(400, "Select the warehouse where the opening stock is stored.");
+    }
+
+    if (warehouseId === "ALL") {
       const all = await db.select({ id: warehouses.id }).from(warehouses).limit(1);
       if (all.length === 0) {
         throw new HttpError(400, "Create a warehouse before listing products.");
@@ -111,8 +100,7 @@ export async function POST(req: Request) {
         stockUnit,
         cartonContains,
         openingQty,
-        warehouseId: warehouseId ?? undefined,
-        warehouseIds: warehouseIds ?? undefined,
+        warehouseId,
       },
       user.id,
     );

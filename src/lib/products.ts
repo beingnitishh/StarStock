@@ -24,17 +24,7 @@ export type RegisterInput = {
   stockUnit: StockUnit;
   cartonContains: number;
   openingQty: number;
-  /**
-   * Legacy single-warehouse selector, still used by bulk import, seed and MCP.
-   * Optional because the listing form sends `warehouseIds` instead.
-   */
-  warehouseId?: WarehouseId;
-  /**
-   * Multi-select warehouse list from the product listing form. Each chosen
-   * warehouse receives the opening stock. When present and non-empty it takes
-   * precedence over `warehouseId`.
-   */
-  warehouseIds?: number[];
+  warehouseId: WarehouseId;
 };
 
 export type OpeningTransactionAudit = {
@@ -74,22 +64,6 @@ export function normalizeWarehouseId(value: unknown): WarehouseId | null {
     if (parsed > 0) return parsed;
   }
   return null;
-}
-
-/**
- * Normalises the multi-select warehouse list sent by the product listing
- * form. Returns null when the payload is not an array so callers can fall
- * back to the legacy single-warehouse field. Duplicates are removed and the
- * result is sorted for deterministic opening-stock ordering.
- */
-export function normalizeWarehouseIds(value: unknown): number[] | null {
-  if (!Array.isArray(value)) return null;
-  const ids: number[] = [];
-  for (const item of value) {
-    const n = Number(item);
-    if (Number.isInteger(n) && n > 0 && !ids.includes(n)) ids.push(n);
-  }
-  return ids.sort((a, b) => a - b);
 }
 
 function isUniqueViolation(error: unknown): boolean {
@@ -145,22 +119,11 @@ export async function registerProductDetailedInTransaction(
       throw new HttpError(409, `A product with SKU "${sku}" already exists.`);
     }
 
-    // Resolve which warehouses receive the opening stock. The listing form
-    // sends an explicit multi-select list; legacy callers send a single id or
-    // the ALL sentinel. A fixed order also makes the opening transaction
-    // sequence deterministic.
-    const explicitIds = normalizeWarehouseIds(input.warehouseIds);
+    // Resolve ALL warehouses case. A fixed order also makes the opening
+    // transaction sequence deterministic.
+    const isAll = input.warehouseId === ALL_WAREHOUSES;
     let selectedWarehouses: Array<{ id: number; name: string }> = [];
-    if (explicitIds && explicitIds.length > 0) {
-      selectedWarehouses = await tx
-        .select({ id: warehouses.id, name: warehouses.name })
-        .from(warehouses)
-        .where(inArray(warehouses.id, explicitIds))
-        .orderBy(asc(warehouses.id));
-      if (selectedWarehouses.length !== explicitIds.length) {
-        throw new HttpError(400, "One or more selected warehouses do not exist.");
-      }
-    } else if (input.warehouseId === ALL_WAREHOUSES) {
+    if (isAll) {
       selectedWarehouses = await tx
         .select({ id: warehouses.id, name: warehouses.name })
         .from(warehouses)
@@ -168,28 +131,24 @@ export async function registerProductDetailedInTransaction(
       if (selectedWarehouses.length === 0) {
         throw new HttpError(400, "Create a warehouse before listing products.");
       }
-    } else if (
-      typeof input.warehouseId === "number" &&
-      Number.isInteger(input.warehouseId) &&
-      input.warehouseId > 0
-    ) {
+    } else {
+      if (!Number.isInteger(input.warehouseId) || (input.warehouseId as number) <= 0) {
+        throw new HttpError(400, "Select the warehouse where the opening stock is stored.");
+      }
       const selected = await tx
         .select({ id: warehouses.id, name: warehouses.name })
         .from(warehouses)
-        .where(eq(warehouses.id, input.warehouseId))
+        .where(eq(warehouses.id, input.warehouseId as number))
         .limit(1);
       if (!selected[0]) {
         throw new HttpError(400, "Selected warehouse does not exist.");
       }
       selectedWarehouses = selected;
-    } else {
-      throw new HttpError(
-        400,
-        "Select at least one warehouse where the opening stock is stored.",
-      );
     }
 
-    const totalOpeningPieces = openingPieces * selectedWarehouses.length;
+    const totalOpeningPieces = isAll
+      ? openingPieces * selectedWarehouses.length
+      : openingPieces;
     if (!Number.isSafeInteger(totalOpeningPieces) || totalOpeningPieces > MAX_STOCK_PIECES) {
       throw new HttpError(400, "Opening stock is too large for StarStock's quantity limits.");
     }
