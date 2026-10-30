@@ -1,4 +1,4 @@
-import { asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/db";
 import {
   products,
@@ -12,6 +12,7 @@ import { HttpError } from "./api";
 import type { DbTransaction } from "./db-transaction";
 import { ensureMcpInventorySchema } from "./mcp-schema";
 import type { ApplicationSource } from "./source-app";
+import { performOperationDetailedInTransaction } from "./stock";
 import { MAX_STOCK_PIECES, toPieces, type StockUnit } from "./units";
 
 export const ALL_WAREHOUSES = "ALL" as const;
@@ -328,4 +329,219 @@ export async function deleteProducts(ids: number[]) {
       .where(inArray(products.id, uniqueIds))
       .returning({ id: products.id, sku: products.sku });
   });
+}
+
+export type AddProductWarehouseInput = {
+  warehouseId: number;
+  openingQty: number;
+  unit?: StockUnit;
+};
+
+export type AddedProductWarehouse = {
+  warehouseId: number;
+  warehouseName: string;
+  qtyPieces: number;
+  transaction: Transaction | null;
+};
+
+export type AddProductToWarehousesResult = {
+  productId: number;
+  sku: string;
+  added: AddedProductWarehouse[];
+  skippedWarehouseIds: number[];
+  resultingTotalPieces: number;
+};
+
+/**
+ * Lists an existing product in one or more additional warehouses inside a
+ * single database transaction.
+ *
+ * - Validates that the product and every requested warehouse exist.
+ * - Deduplicates repeated warehouse IDs in the payload and skips warehouses
+ *   that already have a `warehouse_stock` row for this product.
+ * - Creates a 0-qty `warehouse_stock` row when opening stock is 0 (matching
+ *   `registerProduct`), and uses `performOperationDetailedInTransaction`
+ *   (`inbound` with reason `"Opening stock"`) when opening stock > 0 so audit
+ *   history and running totals stay accurate.
+ */
+export async function addProductToWarehousesInTransaction(
+  tx: DbTransaction,
+  productId: number,
+  entries: AddProductWarehouseInput[],
+  userId: number,
+): Promise<AddProductToWarehousesResult> {
+  if (!Number.isInteger(productId) || productId <= 0) {
+    throw new HttpError(400, "Invalid product id.");
+  }
+  if (!Array.isArray(entries) || entries.length === 0) {
+    throw new HttpError(400, "Select at least one warehouse.");
+  }
+
+  const byWarehouse = new Map<number, AddProductWarehouseInput>();
+  const skippedDuplicatePayloadIds: number[] = [];
+  for (const entry of entries) {
+    if (!Number.isInteger(entry.warehouseId) || entry.warehouseId <= 0) {
+      throw new HttpError(400, "Warehouse is invalid.");
+    }
+    if (!Number.isInteger(entry.openingQty) || entry.openingQty < 0) {
+      throw new HttpError(400, "Opening stock must be a whole number (0 or more).");
+    }
+    if (byWarehouse.has(entry.warehouseId)) {
+      if (!skippedDuplicatePayloadIds.includes(entry.warehouseId)) {
+        skippedDuplicatePayloadIds.push(entry.warehouseId);
+      }
+      continue;
+    }
+    byWarehouse.set(entry.warehouseId, entry);
+  }
+
+  const deduped = [...byWarehouse.values()].sort(
+    (a, b) => a.warehouseId - b.warehouseId,
+  );
+
+  const [product] = await tx
+    .select()
+    .from(products)
+    .where(eq(products.id, productId))
+    .limit(1)
+    .for("update");
+  if (!product) {
+    throw new HttpError(404, "Product not found.");
+  }
+
+  const requestedIds = deduped.map((e) => e.warehouseId);
+  const warehouseRows = await tx
+    .select({ id: warehouses.id, name: warehouses.name })
+    .from(warehouses)
+    .where(inArray(warehouses.id, requestedIds))
+    .orderBy(asc(warehouses.id))
+    .for("update");
+  if (warehouseRows.length !== requestedIds.length) {
+    throw new HttpError(400, "One or more selected warehouses do not exist.");
+  }
+  const warehouseNameById = new Map(warehouseRows.map((w) => [w.id, w.name]));
+
+  const existingStockRows = await tx
+    .select({ warehouseId: warehouseStock.warehouseId })
+    .from(warehouseStock)
+    .where(
+      and(
+        eq(warehouseStock.productId, product.id),
+        inArray(warehouseStock.warehouseId, requestedIds),
+      ),
+    )
+    .orderBy(asc(warehouseStock.warehouseId))
+    .for("update");
+  const existingWarehouseIds = new Set(
+    existingStockRows.map((row) => row.warehouseId),
+  );
+
+  const perCarton = Math.max(product.cartonContains, 1);
+  for (const entry of deduped) {
+    if (existingWarehouseIds.has(entry.warehouseId)) continue;
+    const unit = entry.unit ?? product.stockUnit;
+    const pieces = toPieces(entry.openingQty, unit, perCarton);
+    if (!Number.isSafeInteger(pieces) || pieces > MAX_STOCK_PIECES) {
+      throw new HttpError(
+        400,
+        "Opening stock is too large for StarStock's quantity limits.",
+      );
+    }
+  }
+
+  const added: AddedProductWarehouse[] = [];
+  const skippedSet = new Set<number>(skippedDuplicatePayloadIds);
+
+  for (const entry of deduped) {
+    if (existingWarehouseIds.has(entry.warehouseId)) {
+      skippedSet.add(entry.warehouseId);
+      continue;
+    }
+
+    const warehouseName = warehouseNameById.get(entry.warehouseId) ?? "";
+    const unit = entry.unit ?? product.stockUnit;
+
+    if (entry.openingQty === 0) {
+      const inserted = await tx
+        .insert(warehouseStock)
+        .values({
+          productId: product.id,
+          warehouseId: entry.warehouseId,
+          qtyPieces: 0,
+          updatedAt: new Date(),
+        })
+        .onConflictDoNothing({
+          target: [warehouseStock.productId, warehouseStock.warehouseId],
+        })
+        .returning({ warehouseId: warehouseStock.warehouseId });
+
+      if (inserted.length === 0) {
+        skippedSet.add(entry.warehouseId);
+        continue;
+      }
+
+      added.push({
+        warehouseId: entry.warehouseId,
+        warehouseName,
+        qtyPieces: 0,
+        transaction: null,
+      });
+    } else {
+      const opResult = await performOperationDetailedInTransaction(tx, {
+        type: "inbound",
+        productId: product.id,
+        qty: entry.openingQty,
+        unit,
+        warehouseId: entry.warehouseId,
+        toWarehouseId: null,
+        destination: null,
+        reason: "Opening stock",
+        userId,
+        sourceApp: "web",
+      });
+
+      added.push({
+        warehouseId: entry.warehouseId,
+        warehouseName,
+        qtyPieces: opResult.resultingWarehousePieces ?? opResult.transaction.qtyPieces,
+        transaction: opResult.transaction,
+      });
+    }
+  }
+
+  const totalRows = await tx
+    .select({
+      value: sql<string>`coalesce(sum(${warehouseStock.qtyPieces}), 0)::text`,
+    })
+    .from(warehouseStock)
+    .where(eq(warehouseStock.productId, product.id));
+  const resultingTotalPieces = Number(totalRows[0]?.value ?? 0);
+  if (
+    !Number.isSafeInteger(resultingTotalPieces) ||
+    resultingTotalPieces > MAX_STOCK_PIECES
+  ) {
+    throw new HttpError(
+      400,
+      "Resulting total stock exceeds StarStock's quantity limits.",
+    );
+  }
+
+  return {
+    productId: product.id,
+    sku: product.sku,
+    added,
+    skippedWarehouseIds: [...skippedSet].sort((a, b) => a - b),
+    resultingTotalPieces,
+  };
+}
+
+export async function addProductToWarehouses(
+  productId: number,
+  entries: AddProductWarehouseInput[],
+  userId: number,
+): Promise<AddProductToWarehousesResult> {
+  await ensureMcpInventorySchema();
+  return db.transaction((tx) =>
+    addProductToWarehousesInTransaction(tx, productId, entries, userId),
+  );
 }
