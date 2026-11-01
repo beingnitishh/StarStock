@@ -20,7 +20,7 @@ import {
   TX_META,
   useToast,
 } from "@/components/ui";
-import { isModalOpen, matchesAltKey } from "@/lib/shortcuts";
+import { isModalOpen, isTypingTarget, matchesAltKey } from "@/lib/shortcuts";
 import { fmtDate, fmtInt, splitCartons } from "@/lib/units";
 import type { OpType, ProductRow, TxRow, Warehouse } from "@/lib/types";
 
@@ -77,6 +77,24 @@ export default function ProductPage() {
     () => (typeFilter === "all" ? history : history.filter((h) => h.type === typeFilter)),
     [history, typeFilter],
   );
+
+  // Escape leaves the product page and returns to the inventory list. Modals
+  // handle their own Escape (closing the dialog), and a focused text field
+  // consumes Escape first so the user can keep typing.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      if (e.defaultPrevented || e.repeat || e.isComposing) return;
+      if (isModalOpen()) return;
+      if (isTypingTarget(e)) return;
+      e.preventDefault();
+      router.push("/inventory");
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [router]);
 
   useEffect(() => {
     if (loading || notFound || !product || !canWrite) return;
@@ -158,13 +176,21 @@ export default function ProductPage() {
 
   return (
     <div className="rise-in space-y-5">
-      <Link
-        href="/inventory"
-        className="inline-flex items-center gap-1.5 text-xs font-bold text-ink-soft transition-colors hover:text-brand"
-      >
-        <Icon name="arrow-left" className="h-3.5 w-3.5" />
-        Back to inventory
-      </Link>
+      <div className="flex items-center justify-between gap-3">
+        <Link
+          href="/inventory"
+          title="Back to inventory (Esc)"
+          aria-keyshortcuts="Escape"
+          className="inline-flex items-center gap-1.5 text-xs font-bold text-ink-soft transition-colors hover:text-brand"
+        >
+          <Icon name="arrow-left" className="h-3.5 w-3.5" />
+          Back to inventory
+        </Link>
+        <span className="hidden items-center gap-1.5 text-[11px] font-semibold text-ink-faint sm:inline-flex">
+          Press
+          <Kbd tone="light">Esc</Kbd>
+        </span>
+      </div>
 
       {/* Header card */}
       <div className="rounded-xl border border-line bg-card p-4 sm:p-5">

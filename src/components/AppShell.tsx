@@ -341,17 +341,16 @@ function ShortcutsModal({
           </div>
         </div>
 
-        {!readOnly ? (
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink-faint">
-              Product page
-            </p>
-            <div className="mt-1.5 divide-y divide-line rounded-lg border border-line bg-card px-3.5">
-              <ShortcutRow label="Inbound" keys={["Alt", "I"]} />
-              <ShortcutRow label="Outbound" keys={["Alt", "O"]} />
-            </div>
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-[0.12em] text-ink-faint">
+            Product page
+          </p>
+          <div className="mt-1.5 divide-y divide-line rounded-lg border border-line bg-card px-3.5">
+            <ShortcutRow label="Back to inventory" keys={["Esc"]} />
+            {!readOnly ? <ShortcutRow label="Inbound" keys={["Alt", "I"]} /> : null}
+            {!readOnly ? <ShortcutRow label="Outbound" keys={["Alt", "O"]} /> : null}
           </div>
-        ) : null}
+        </div>
       </div>
     </Modal>
   );
