@@ -1,6 +1,6 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
-import { products } from "@/db/schema";
+import { products, warehouseStock } from "@/db/schema";
 import {
   errResponse,
   HttpError,
@@ -13,6 +13,7 @@ import { checkImageUrl } from "@/lib/images";
 import { applyProductImage, isOwnStoredImageUrl } from "@/lib/product-images";
 import { deleteProducts } from "@/lib/products";
 import { fetchProductRow, fetchTransactionRows } from "@/lib/query";
+import { MAX_STOCK_PIECES } from "@/lib/units";
 
 export const dynamic = "force-dynamic";
 
@@ -89,12 +90,73 @@ export async function PATCH(req: Request, ctx: Ctx) {
       return Response.json({ ok: true, unchanged: true });
     }
 
-    const [updated] = await db
-      .update(products)
-      .set(updates)
-      .where(eq(products.id, id))
-      .returning({ id: products.id, imageUrl: products.imageUrl });
-    if (!updated) throw new HttpError(404, "Product not found.");
+    const updated = await db.transaction(async (tx) => {
+      const [current] = await tx
+        .select({ cartonContains: products.cartonContains })
+        .from(products)
+        .where(eq(products.id, id))
+        .limit(1)
+        .for("update");
+      if (!current) throw new HttpError(404, "Product not found.");
+
+      const newPer = updates.cartonContains;
+      if (newPer !== undefined && newPer !== current.cartonContains) {
+        // Stock is stored in pieces; CTN is only a display value. Keep the
+        // carton count and scale the pieces to the new pack size, preserving
+        // any loose pieces that do not fill a carton.
+        const oldPer = Math.max(current.cartonContains, 1);
+        const stockRows = await tx
+          .select({
+            warehouseId: warehouseStock.warehouseId,
+            qtyPieces: warehouseStock.qtyPieces,
+          })
+          .from(warehouseStock)
+          .where(eq(warehouseStock.productId, id))
+          .for("update");
+
+        const recalculated = stockRows.map((row) => {
+          const cartons = Math.floor(row.qtyPieces / oldPer);
+          const loose = row.qtyPieces % oldPer;
+          return {
+            warehouseId: row.warehouseId,
+            qtyPieces: cartons * newPer + loose,
+          };
+        });
+        const totalPieces = recalculated.reduce((sum, row) => sum + row.qtyPieces, 0);
+        const tooLarge =
+          !Number.isSafeInteger(totalPieces) ||
+          totalPieces > MAX_STOCK_PIECES ||
+          recalculated.some(
+            (row) => !Number.isSafeInteger(row.qtyPieces) || row.qtyPieces > MAX_STOCK_PIECES,
+          );
+        if (tooLarge) {
+          throw new HttpError(
+            400,
+            "New Carton Contains makes the stock too large for StarStock's quantity limits.",
+          );
+        }
+
+        for (const row of recalculated) {
+          await tx
+            .update(warehouseStock)
+            .set({ qtyPieces: row.qtyPieces, updatedAt: new Date() })
+            .where(
+              and(
+                eq(warehouseStock.productId, id),
+                eq(warehouseStock.warehouseId, row.warehouseId),
+              ),
+            );
+        }
+      }
+
+      const [row] = await tx
+        .update(products)
+        .set(updates)
+        .where(eq(products.id, id))
+        .returning({ id: products.id, imageUrl: products.imageUrl });
+      if (!row) throw new HttpError(404, "Product not found.");
+      return row;
+    });
     return Response.json({ ok: true, imageChanged, imageUrl: updated.imageUrl });
   } catch (e) {
     return errResponse(e);
