@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/db";
-import { products } from "@/db/schema";
+import { products, warehouseStock } from "@/db/schema";
 import {
   errResponse,
   HttpError,
@@ -89,11 +89,41 @@ export async function PATCH(req: Request, ctx: Ctx) {
       return Response.json({ ok: true, unchanged: true });
     }
 
-    const [updated] = await db
-      .update(products)
-      .set(updates)
-      .where(eq(products.id, id))
-      .returning({ id: products.id, imageUrl: products.imageUrl });
+    const updated = await db.transaction(async (tx) => {
+      const [current] = await tx
+        .select({ id: products.id, cartonContains: products.cartonContains, imageUrl: products.imageUrl })
+        .from(products)
+        .where(eq(products.id, id))
+        .for("update");
+      if (!current) return null;
+
+      // Warehouse quantities are stored as pieces, but carton counts are the
+      // user's intended stock quantity. Keep each warehouse's carton count
+      // stable when its carton-size configuration changes, preserving any
+      // loose pieces as well.
+      if (updates.cartonContains !== undefined && updates.cartonContains !== current.cartonContains) {
+        const rows = await tx
+          .select({ id: warehouseStock.id, qtyPieces: warehouseStock.qtyPieces })
+          .from(warehouseStock)
+          .where(eq(warehouseStock.productId, id))
+          .for("update");
+        for (const row of rows) {
+          const cartons = Math.floor(row.qtyPieces / current.cartonContains);
+          const loosePieces = row.qtyPieces % current.cartonContains;
+          await tx
+            .update(warehouseStock)
+            .set({ qtyPieces: cartons * updates.cartonContains + loosePieces, updatedAt: new Date() })
+            .where(eq(warehouseStock.id, row.id));
+        }
+      }
+
+      const [result] = await tx
+        .update(products)
+        .set(updates)
+        .where(eq(products.id, id))
+        .returning({ id: products.id, imageUrl: products.imageUrl });
+      return result ?? null;
+    });
     if (!updated) throw new HttpError(404, "Product not found.");
     return Response.json({ ok: true, imageChanged, imageUrl: updated.imageUrl });
   } catch (e) {
